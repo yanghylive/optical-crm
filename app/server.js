@@ -222,7 +222,9 @@ function freshDB() {
 
 let db = loadDB();
 let saveTimer = null;
+let _cacheEpoch = 0; // 任何写操作递增，使派生计算缓存（随访建议/生命周期）失效
 function saveDB() {
+  _cacheEpoch++;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     // 原子写：先写临时文件再 rename，避免掉电/崩溃时把 db.json 写成半截
@@ -327,7 +329,7 @@ function lanUrls() {
 }
 
 /* 健康检查：不返回任何业务数据，供 Docker / 负载均衡探活 */
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.2.0', time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.3.0', time: new Date().toISOString() }));
 
 app.post('/api/login', (req, res) => {
   const { password } = req.body || {};
@@ -354,55 +356,217 @@ app.post('/api/changePassword', (req, res) => {
 /* ---------------- 回访提醒 ---------------- */
 function addDays(iso, n) { const d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; }
 function diffDays(a, b) { return Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 86400000); }
-const FOLLOWUP_RULES = [
-  { type: '佩戴适应回访', days: 7, match: () => true, script: '您好，我是明视眼镜。您上周配的眼镜戴着还舒服吗？有没有压鼻、下滑或看东西疲劳？有空可以来店里免费调整、清洗。' },
-  { type: '视力复查提醒', days: 90, match: (p) => p.category === '框架眼镜' || p.category === '功能镜片', script: '您好，上次配镜已经 3 个月了，建议来复查一下视力，看看度数有没有变化，镜片是否还合适。学生尤其建议定期复查。' },
-  { type: '隐形复购提醒', days: 90, match: (p) => p.category === '隐形眼镜', script: '您好，您的隐形眼镜差不多用完了吧？最近有优惠，需要帮您留一盒吗？也可以顺便检查一下角膜健康。' },
-];
-/* 回访天数可在「门店设置」里改（settings.followUpRules），未配置的类型用默认天数 */
-if (!Array.isArray(db.settings.followUpRules)) db.settings.followUpRules = FOLLOWUP_RULES.map((r) => ({ type: r.type, days: r.days }));
-function followupRules() {
-  const cfg = db.settings.followUpRules || [];
-  return FOLLOWUP_RULES.map((r) => {
-    const c = cfg.find((x) => x && x.type === r.type);
-    const days = c && Number(c.days) > 0 ? Math.floor(Number(c.days)) : r.days;
-    return { ...r, days };
-  });
+/* ---- 产品类型推断（驱动差异化临床随访） ---- */
+const PRODUCT_TYPES = ['OK镜', '离焦防控镜', '普通框架', '隐形眼镜', '视训', '换框换片', '其他'];
+const DEFAULT_PRODUCT_KEYWORDS = {
+  'OK镜': ['OK', 'ok', '角膜塑形', '塑型', '塑形镜', '角塑'],
+  '离焦防控镜': ['离焦', '防控', '星趣控', '新乐学', '柯学优', '乐学', '环焦', '控优点', '学轻松', '不等像'],
+  '隐形眼镜': ['隐形', '月抛', '季抛', '年抛', '半年抛', '角膜接触'],
+  '视训': ['视训', '训练', '反转拍', '弱视', '视功能'],
+};
+function productTypeKeywords() { return db.settings.productTypeKeywords || DEFAULT_PRODUCT_KEYWORDS; }
+function inferProductType(p) {
+  if (p.productType) return p.productType;
+  if (p.category === '换框' || p.category === '换片') return '换框换片';
+  const text = [p.category, p.lens, p.frame, p.model].join(' ');
+  const kw = productTypeKeywords();
+  for (const t of ['OK镜', '离焦防控镜', '隐形眼镜', '视训']) {
+    if ((kw[t] || []).some((k) => text.includes(k))) return t;
+  }
+  if (p.category === '隐形眼镜') return '隐形眼镜';
+  return '普通框架';
 }
+
+/* ---- 分品类临床随访模板（对齐专家共识 + 院方病种节点时间轴） ---- */
+const DEFAULT_FOLLOWUP_TEMPLATES = [
+  { productType: 'OK镜', repeatDays: 90, repeatLabel: '定期复查', stages: [
+    { label: '第1天复查', days: 1, script: '您好，我是{shopName}。孩子昨晚首次戴OK镜，今天务必到店复查——检查角膜健康、镜片配适和裸眼视力。首夜需睡足8小时，晨起2小时内戴镜状态下复诊；如强烈异物感或疼痛，先摘镜及时就诊。' },
+    { label: '第1周复查', days: 7, script: '您好，我是{shopName}。OK镜配戴满一周，请到店复查角膜与配适情况，确认塑形效果与眼部健康。' },
+    { label: '第2周复查', days: 14, script: '您好，我是{shopName}。OK镜配戴两周，建议复查视力与角膜，评估塑形稳定情况。' },
+    { label: '第1月复查', days: 30, script: '您好，我是{shopName}。OK镜配戴满月，请到店复查裸眼视力、角膜地形图与眼轴，评估防控效果。' },
+    { label: '第3月复查', days: 90, script: '您好，我是{shopName}。OK镜配戴满3个月，请复查视力、角膜与眼轴。之后建议每2~3个月定期复查，守护角膜安全与防控效果。' },
+  ]},
+  { productType: '离焦防控镜', repeatDays: 90, repeatLabel: '眼轴复查', stages: [
+    { label: '第1月复查', days: 30, script: '您好，我是{shopName}。孩子戴离焦防控镜满1个月，建议到店复查视力与配戴适应情况，确认防控镜片佩戴正确。' },
+    { label: '第3月眼轴复查', days: 90, script: '您好，我是{shopName}。防控满3个月，建议复查眼轴与屈光度，评估近视控制效果（6~10岁眼轴安全增长每年应小于0.20mm）。' },
+    { label: '第6月眼轴复查', days: 180, script: '您好，我是{shopName}。防控满半年，请复查眼轴、屈光度与视力，对比既往数据评估控制效果，必要时调整防控方案。' },
+  ]},
+  { productType: '普通框架', repeatDays: 0, repeatLabel: '', stages: [
+    { label: '佩戴适应回访', days: 7, script: '您好，我是{shopName}。您上周配的眼镜戴着还舒服吗？有没有压鼻、下滑或看东西疲劳？有空可以来店里免费调整、清洗。' },
+    { label: '年度复查', days: 365, script: '您好，我是{shopName}。您的眼镜已配戴一年，建议复查视力，看看度数有无变化，镜片是否还合适。' },
+  ]},
+  { productType: '隐形眼镜', repeatDays: 90, repeatLabel: '角膜健康检查', stages: [
+    { label: '复购提醒', days: 90, script: '您好，我是{shopName}。您的隐形眼镜差不多用完了吧？需要帮您留一盒吗？也可顺便检查角膜健康。' },
+  ]},
+  { productType: '视训', repeatDays: 0, repeatLabel: '', stages: [
+    { label: '疗程第1周', days: 7, script: '您好，我是{shopName}。视功能训练第一周，孩子坚持得怎么样？有无不适？欢迎反馈，我们调整训练方案。' },
+    { label: '疗程第2周', days: 14, script: '您好，我是{shopName}。训练两周，建议到店评估训练效果，调整方案。' },
+    { label: '疗程第1月', days: 30, script: '您好，我是{shopName}。训练满月，请到店复查视功能进展。' },
+  ]},
+  { productType: '换框换片', repeatDays: 0, repeatLabel: '', stages: [
+    { label: '佩戴适应回访', days: 7, script: '您好，我是{shopName}。换框/换片后戴着还合适吗？有无松动、压鼻或视物不适？欢迎到店免费调整。' },
+  ]},
+  { productType: '其他', repeatDays: 0, repeatLabel: '', stages: [
+    { label: '使用回访', days: 7, script: '您好，我是{shopName}。感谢惠顾，使用上有任何问题欢迎随时联系我们。' },
+  ]},
+];
+if (!Array.isArray(db.settings.followupTemplates)) db.settings.followupTemplates = JSON.parse(JSON.stringify(DEFAULT_FOLLOWUP_TEMPLATES));
+if (!db.settings.lifecycleThresholds) db.settings.lifecycleThresholds = { newDays: 90, lostDays: 365, loyalOrders: 4, loyalDays: 180, graceDays: 7 };
+let _tplCache = null, _tplKey = '';
+function followupTemplates() {
+  const key = JSON.stringify(db.settings.followupTemplates || null);
+  if (_tplCache && _tplKey === key) return _tplCache;
+  const cfg = db.settings.followupTemplates || [];
+  const result = DEFAULT_FOLLOWUP_TEMPLATES.map((def) => {
+    const c = cfg.find((x) => x && x.productType === def.productType);
+    if (!c) return def;
+    const stages = def.stages.map((s, i) => {
+      const cs = (c.stages || [])[i];
+      return { label: cs && cs.label ? cs.label : s.label, days: cs && Number(cs.days) > 0 ? Math.floor(Number(cs.days)) : s.days, script: cs && cs.script ? cs.script : s.script };
+    });
+    return { productType: def.productType, stages, repeatDays: c.repeatDays != null ? Number(c.repeatDays) : def.repeatDays, repeatLabel: c.repeatLabel != null ? c.repeatLabel : def.repeatLabel };
+  });
+  _tplCache = result; _tplKey = key;
+  return result;
+}
+function templateFor(pt) { const ts = followupTemplates(); return ts.find((t) => t.productType === pt) || ts.find((t) => t.productType === '其他'); }
+const DISCARD_DAYS = { '月抛': 30, '季抛': 90, '半年抛': 180, '年抛': 365 };
+function shopScript(s) { return String(s || '').replace(/\{shopName\}/g, db.settings.shopName || '明视眼镜'); }
+/* 展开某单的到期随访时点（固定时点全部到期项 + 最近一次周期复查） */
+function expandDueStages(p, today, horizon) {
+  const pt = inferProductType(p);
+  const tpl = templateFor(pt);
+  const stages = tpl.stages.map((s, i) => ({ ...s, index: i }));
+  if (pt === '隐形眼镜' && stages.length) stages[0] = { ...stages[0], days: DISCARD_DAYS[p.discardCycle] || 90 };
+  const out = [];
+  for (const s of stages) {
+    const due = addDays(p.date, s.days);
+    if (due <= horizon) out.push({ index: s.index, label: s.label, due, script: s.script, productType: pt });
+  }
+  const R = Number(tpl.repeatDays) || 0;
+  if (R > 0 && stages.length) {
+    const lastDays = Math.max(...stages.map((s) => s.days));
+    const k = Math.floor((diffDays(p.date, horizon) - lastDays) / R);
+    if (k >= 1) {
+      const due = addDays(p.date, lastDays + k * R);
+      out.push({ index: stages.length + k, label: (tpl.repeatLabel || '定期复查') + '·第' + k + '次', due, script: '您好，我是{shopName}。按复查周期，建议您到店复查，评估眼部健康与防控效果。', productType: pt });
+    }
+  }
+  return out;
+}
+let _suggCache = null, _suggKey = '';
 function followupSuggestions() {
   const today = todayISO();
+  const ck = _cacheEpoch + '|' + today;
+  if (_suggCache && _suggKey === ck) return _suggCache;
   const horizon = addDays(today, 7);
-  const handled = new Set(db.followUps.filter((f) => f.status !== 'pending').map((f) => f.customerId + '|' + f.type + '|' + f.basedOn));
+  const handled = new Set(db.followUps.filter((f) => f.status !== 'pending' && f.stageIndex != null).map((f) => f.customerId + '|' + (f.productType || '') + '|' + f.basedOn + '|' + f.stageIndex));
   const byCust = groupPrescriptionsByCustomer();
   for (const arr of byCust.values()) arr.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  const rules = followupRules();
   const out = [];
   for (const c of db.customers) {
     const ps = byCust.get(c.id) || [];
     if (!ps.length) continue;
-    for (const rule of rules) {
-      const p = ps.find((x) => rule.match(x, c));
-      if (!p) continue;
-      const key = c.id + '|' + rule.type + '|' + p.id;
-      if (handled.has(key)) continue;
-      const due = addDays(p.date, rule.days);
-      if (due > horizon) continue;
+    const latestByType = new Map();
+    for (const p of ps) { const pt = inferProductType(p); if (!latestByType.has(pt)) latestByType.set(pt, p); }
+    for (const [pt, p] of latestByType) {
+      // 每客户每产品类型只保留「最近一个到期时点」= 当前该做的复查，避免历史单全部时点淹没清单
+      let pick = null;
+      for (const s of expandDueStages(p, today, horizon)) {
+        const key = c.id + '|' + pt + '|' + p.id + '|' + s.index;
+        if (handled.has(key)) continue;
+        if (!pick || s.due > pick.s.due) pick = { key, s };
+      }
+      if (!pick) continue;
+      const s = pick.s;
       out.push({
-        key, customerId: c.id, customerName: c.name, phone: c.phone, age: c.age, school: c.school,
-        type: rule.type, basedOn: p.id, lastDate: p.date, lastCategory: p.category, lastAmount: p.amount,
-        dueDate: due, overdue: due < today, daysDiff: diffDays(today, due), script: rule.script,
+        key: pick.key, customerId: c.id, customerName: c.name, phone: c.phone, age: c.age, school: c.school,
+        productType: pt, type: pt + '·' + s.label, stageIndex: s.index, stageLabel: s.label,
+        basedOn: p.id, lastDate: p.date, lastCategory: p.category, lastAmount: p.amount,
+        dueDate: s.due, overdue: s.due < today, daysDiff: diffDays(today, s.due), script: shopScript(s.script),
       });
     }
   }
-  return out.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  out.sort((a, b) => a.dueDate.localeCompare(b.dueDate));
+  _suggCache = out; _suggKey = ck;
+  return out;
+}
+
+/* ---- 客户生命周期阶段（派生） ---- */
+function lifecycleThresholds() { return db.settings.lifecycleThresholds || { newDays: 90, lostDays: 365, loyalOrders: 4, loyalDays: 180, graceDays: 7 }; }
+function expectedCycle(pt) { const tpl = templateFor(pt); if (Number(tpl.repeatDays) > 0) return Number(tpl.repeatDays); return Math.max(...tpl.stages.map((s) => s.days), 365); }
+function computeStage(ps, today, th) {
+  if (!ps.length) return '潜在';
+  let latest = '', latestP = null;
+  for (const p of ps) { if ((p.date || '') > latest) { latest = p.date || ''; latestP = p; } }
+  const since = diffDays(latest, today);
+  if (since > th.lostDays) return '流失';
+  if (ps.length >= th.loyalOrders && since <= th.loyalDays) return '忠诚';
+  if (since > expectedCycle(inferProductType(latestP))) return '沉睡';
+  if (ps.length === 1 && since <= th.newDays) return '新客';
+  return '活跃';
+}
+function lifecycleMap() {
+  const byCust = groupPrescriptionsByCustomer();
+  const today = todayISO(); const th = lifecycleThresholds();
+  const m = new Map();
+  for (const c of db.customers) m.set(c.id, computeStage(byCust.get(c.id) || [], today, th));
+  return m;
+}
+/* 节点复查完成率（防控/OK镜，院方核心指标） */
+function reviewCompliance() {
+  const today = todayISO(); const grace = lifecycleThresholds().graceDays || 7;
+  const byCust = groupPrescriptionsByCustomer();
+  for (const arr of byCust.values()) arr.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const doneByKey = new Map();
+  for (const f of db.followUps) {
+    if (f.status === 'done' && f.stageIndex != null) {
+      const k = f.customerId + '|' + (f.productType || '') + '|' + f.basedOn + '|' + f.stageIndex;
+      const d = (f.doneAt || f.createdAt || '').slice(0, 10);
+      if (!doneByKey.has(k) || d < doneByKey.get(k)) doneByKey.set(k, d);
+    }
+  }
+  let due = 0, onTime = 0;
+  for (const c of db.customers) {
+    const ps = byCust.get(c.id) || [];
+    const latestByType = new Map();
+    for (const p of ps) { const pt = inferProductType(p); if (!latestByType.has(pt)) latestByType.set(pt, p); }
+    for (const [pt, p] of latestByType) {
+      if (pt !== 'OK镜' && pt !== '离焦防控镜') continue;
+      for (const s of expandDueStages(p, today, today)) {
+        due++;
+        const doneDate = doneByKey.get(c.id + '|' + pt + '|' + p.id + '|' + s.index);
+        if (doneDate && doneDate <= addDays(s.due, grace)) onTime++;
+      }
+    }
+  }
+  return { due, onTime, rate: due ? onTime / due : 0 };
 }
 app.get('/api/followups/suggestions', (req, res) => res.json(followupSuggestions()));
 app.get('/api/followups', (req, res) => res.json(db.followUps.slice().sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).map((f) => ({ ...f, customerName: (customerById(f.customerId) || {}).name || f.customerId }))));
 app.post('/api/followups', (req, res) => {
   const b = req.body || {};
   if (!b.customerId || !b.type) return res.status(400).json({ error: '缺少客户或类型' });
-  const f = { id: uid('f_'), customerId: b.customerId, type: b.type, basedOn: b.basedOn || '', status: b.status || 'done', note: b.note || '', channel: b.channel || '', createdAt: new Date().toISOString(), doneAt: new Date().toISOString() };
+  const f = { id: uid('f_'), customerId: b.customerId, type: b.type, basedOn: b.basedOn || '', status: b.status || 'done', note: b.note || '', channel: b.channel || '', productType: b.productType || '', stageIndex: b.stageIndex != null ? Number(b.stageIndex) : null, stageLabel: b.stageLabel || '', createdAt: new Date().toISOString(), doneAt: new Date().toISOString() };
   db.followUps.push(f); saveDB(); res.json(f);
+});
+let _lcCache = null, _lcKey = '';
+app.get('/api/lifecycle-stats', (req, res) => {
+  const ck = _cacheEpoch + '|' + todayISO();
+  if (_lcCache && _lcKey === ck) return res.json(_lcCache);
+  const stages = lifecycleMap();
+  const dist = {};
+  for (const s of stages.values()) dist[s] = (dist[s] || 0) + 1;
+  const total = db.customers.length;
+  const withOrders = [...stages.values()].filter((s) => s !== '潜在').length;
+  const sleeping = (dist['沉睡'] || 0) + (dist['流失'] || 0);
+  const byCust = groupPrescriptionsByCustomer();
+  let repeat = 0;
+  for (const arr of byCust.values()) if (arr.length >= 2) repeat++;
+  const rc = reviewCompliance();
+  const result = { total, stageDist: dist, sleepingRatio: total ? sleeping / total : 0, repurchaseRate: withOrders ? repeat / withOrders : 0, reviewDue: rc.due, reviewOnTime: rc.onTime, reviewRate: rc.rate };
+  _lcCache = result; _lcKey = ck;
+  res.json(result);
 });
 
 /* ---------------- 会员管理 ---------------- */
@@ -725,24 +889,31 @@ app.get('/api/stats', (req, res) => res.json(stats()));
 
 app.get('/api/customers', (req, res) => {
   const q = String(req.query.search || '').trim().toLowerCase();
+  const stageFilter = req.query.stage || '';
   const byCust = groupPrescriptionsByCustomer();
-  const list = db.customers
+  const today = todayISO(); const th = lifecycleThresholds();
+  let list = db.customers
     .filter((c) => !q || [c.name, c.phone, c.school, c.source].join(' ').toLowerCase().includes(q))
     .map((c) => {
       const ps = byCust.get(c.id) || [];
       let totalAmount = 0, lastDate = '';
       for (const p of ps) { totalAmount += Number(p.amount || 0); if ((p.date || '') > lastDate) lastDate = p.date || ''; }
-      return { ...c, orderCount: ps.length, totalAmount, lastDate };
-    })
-    .sort((a, b) => (b.lastDate || '').localeCompare(a.lastDate || ''));
-  paginate(list, req, res);
+      return { ...c, orderCount: ps.length, totalAmount, lastDate, _ps: ps };
+    });
+  if (stageFilter) list = list.map((c) => ({ ...c, lifecycleStage: computeStage(c._ps, today, th) })).filter((c) => c.lifecycleStage === stageFilter);
+  list.sort((a, b) => (b.lastDate || '').localeCompare(a.lastDate || ''));
+  const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 0, 0), 500);
+  const withStage = ({ _ps, ...c }) => ({ ...c, lifecycleStage: c.lifecycleStage || computeStage(_ps, today, th) });
+  if (!pageSize) return res.json(list.map(withStage));
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  res.json({ items: list.slice((page - 1) * pageSize, page * pageSize).map(withStage), total: list.length, page, pageSize });
 });
 
 app.get('/api/customers/:id', (req, res) => {
   const c = customerById(req.params.id);
   if (!c) return res.status(404).json({ error: '客户不存在' });
   const ps = db.prescriptions.filter((p) => p.customerId === c.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  res.json({ ...c, prescriptions: ps });
+  res.json({ ...c, lifecycleStage: computeStage(ps, todayISO(), lifecycleThresholds()), prescriptions: ps });
 });
 
 app.post('/api/customers', (req, res) => {
@@ -821,6 +992,7 @@ app.post('/api/prescriptions', (req, res) => {
     category: b.category || '', frame: b.frame || '', model: b.model || '', lens: b.lens || '',
     sphR: b.sphR || '', sphL: b.sphL || '', pd: b.pd || '', rpd: b.rpd || '', lpd: b.lpd || '',
     phR: b.phR || '', phL: b.phL || '',
+    productType: b.productType || '', discardCycle: b.discardCycle || '',
     remark: b.remark || '', payMethod: b.payMethod || '现金', memberId: b.memberId || '',
     createdAt: new Date().toISOString(),
   };
@@ -885,7 +1057,7 @@ app.put('/api/prescriptions/:id', (req, res) => {
   const p = db.prescriptions.find((x) => x.id === req.params.id);
   if (!p) return res.status(404).json({ error: '记录不存在' });
   const b = req.body || {};
-  ['date', 'amount', 'doctor', 'sales', 'maker', 'company', 'category', 'frame', 'model', 'lens', 'sphR', 'sphL', 'pd', 'rpd', 'lpd', 'phR', 'phL', 'remark'].forEach((k) => {
+  ['date', 'amount', 'doctor', 'sales', 'maker', 'company', 'category', 'frame', 'model', 'lens', 'sphR', 'sphL', 'pd', 'rpd', 'lpd', 'phR', 'phL', 'productType', 'discardCycle', 'remark'].forEach((k) => {
     if (b[k] !== undefined) p[k] = k === 'amount' ? Number(b[k] || 0) : b[k];
   });
   saveDB(); res.json(enrichPrescription(p));
@@ -932,7 +1104,7 @@ app.put('/api/settings', (req, res) => {
 });
 
 /* ---------------- Excel 导入导出 ---------------- */
-const COLUMNS = ['备注', '日期', '姓名', '性别', '年龄', '电话', '学校', '来源', '来源明细', '金额', '医生', '销售', '制作', '公司', '分类方式', '框/产品', '型号', '片', '度数R', '度数L', '瞳距', 'RPD', 'LPD', '瞳高R', '瞳高L'];
+const COLUMNS = ['备注', '日期', '姓名', '性别', '年龄', '电话', '学校', '来源', '来源明细', '金额', '医生', '销售', '制作', '公司', '分类方式', '框/产品', '型号', '片', '度数R', '度数L', '瞳距', 'RPD', 'LPD', '瞳高R', '瞳高L', '产品类型', '抛弃周期'];
 
 function excelDate(v) {
   if (v instanceof Date) return `${v.getUTCFullYear()}-${pad(v.getUTCMonth() + 1)}-${pad(v.getUTCDate())}`;
@@ -1082,6 +1254,7 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
         frame: String(get('框/产品') || get('框') || ''), model: String(get('型号') || ''), lens: String(get('片') || ''),
         sphR: String(get('度数R') || ''), sphL: String(get('度数L') || ''),
         pd, rpd, lpd, phR, phL,
+        productType: String(get('产品类型') || ''), discardCycle: String(get('抛弃周期') || ''),
         remark: String(get('备注') || ''), createdAt: new Date().toISOString(),
       });
       createdOrders++;
@@ -1147,6 +1320,7 @@ app.get('/api/export', async (req, res) => {
     '医生': p.doctor, '销售': p.sales, '制作': p.maker, '公司': p.company, '分类方式': p.category,
     '框/产品': p.frame, '型号': p.model, '片': p.lens, '度数R': p.sphR, '度数L': p.sphL,
     '瞳距': p.pd, 'RPD': p.rpd, 'LPD': p.lpd, '瞳高R': p.phR || '', '瞳高L': p.phL || '',
+    '产品类型': p.productType || '', '抛弃周期': p.discardCycle || '',
   }));
   try {
     const ws = await buildWorkbook(data, '配镜记录');

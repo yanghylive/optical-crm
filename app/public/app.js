@@ -158,7 +158,7 @@ async function route() {
 
 /* ---------------- 工作台 ---------------- */
 async function renderDashboard() {
-  const boot = await api('/api/bootstrap');
+  const [boot, lc] = await Promise.all([api('/api/bootstrap'), api('/api/lifecycle-stats')]);
   state.settings = boot.settings;
   state.lanUrls = boot.lanUrls || [];
   state.stats = boot.stats;
@@ -182,6 +182,21 @@ async function renderDashboard() {
         <div class="stat-value" style="color:${s.followupsDue ? '#d97706' : 'inherit'}">${s.followupsDue}<small></small></div>
         <div class="stat-foot">位 · 点击查看回访清单</div>
       </a>
+    </div>
+
+    <div class="panel" style="margin-bottom:18px">
+      <div class="panel-head"><div><div class="panel-title">客户经营 · 全生命周期</div><div class="panel-sub">对齐院方家庭眼健康指标</div></div><a class="link" href="#/customers">客户分层 →</a></div>
+      <div class="panel-body">
+        <div class="grid stats" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+          ${statCard('节点复查完成率', (lc.reviewRate * 100).toFixed(0) + '%', `防控/OK镜 ${lc.reviewOnTime}/${lc.reviewDue} 按期`, 'accent')}
+          ${statCard('复购率', (lc.repurchaseRate * 100).toFixed(0) + '%', '≥2 单客户占比', '')}
+          ${statCard('沉睡+流失占比', (lc.sleepingRatio * 100).toFixed(0) + '%', '需唤醒', 'teal')}
+          ${statCard('客户总数', lc.total, '人', '')}
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px">
+          ${STAGES.map((st) => `<span class="tag ${STAGE_COLOR[st] || ''}">${st} ${lc.stageDist[st] || 0}</span>`).join('')}
+        </div>
+      </div>
     </div>
 
     <div class="grid two-col">
@@ -508,6 +523,8 @@ function openPrescriptionForm(p = null) {
         <div class="field"><label>使用卡项</label><select class="select" id="pUseCard"><option value="">不使用卡项</option></select></div>
         <div class="field"><label>使用优惠券</label><select class="select" id="pCoupon"><option value="">不使用优惠券</option></select></div>
         <div class="field"><label>分类方式</label><select class="select" id="fCat"><option value="">请选择</option>${categories.map((x) => `<option ${p?.category === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
+        <div class="field"><label>产品类型（驱动临床随访）</label><select class="select" id="fProductType"><option value="">自动推断</option>${['OK镜', '离焦防控镜', '普通框架', '隐形眼镜', '视训', '换框换片', '其他'].map((x) => `<option ${p?.productType === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+        <div class="field"><label>隐形抛弃周期</label><select class="select" id="fDiscard"><option value="">不适用</option>${['月抛', '季抛', '半年抛', '年抛'].map((x) => `<option ${p?.discardCycle === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
         <div class="field"><label>公司</label><input class="input" id="fCompany" value="${esc(p?.company || '')}" placeholder="供货公司 / 品牌方"></div>
         <div class="field"><label>框 / 产品</label><input class="input" id="fFrame" value="${esc(p?.frame || '')}" placeholder="镜架品牌或产品"></div>
         <div class="field"><label>型号</label><input class="input" id="fModel" value="${esc(p?.model || '')}" placeholder="具体型号"></div>
@@ -632,6 +649,8 @@ function openPrescriptionForm(p = null) {
       lpd: $('#fLpd', root).value,
       phR: $('#fPhR', root).value,
       phL: $('#fPhL', root).value,
+      productType: $('#fProductType', root).value,
+      discardCycle: $('#fDiscard', root).value,
       memberId: memberSelect ? memberSelect.value : '',
       payMethod: paySelect ? paySelect.value : '现金',
       useBalance: useBalanceInput ? Number(useBalanceInput.value || 0) : 0,
@@ -666,10 +685,14 @@ function openPrescriptionForm(p = null) {
 }
 
 /* ---------------- 客户管理 ---------------- */
+const STAGE_COLOR = { '潜在': 'gray', '新客': 'green', '活跃': '', '沉睡': 'orange', '流失': 'orange', '忠诚': 'green' };
+const STAGES = ['潜在', '新客', '活跃', '沉睡', '流失', '忠诚'];
 async function renderCustomers() {
   const q = state._customerSearch || '';
+  const stage = state._customerStage || '';
   const params = new URLSearchParams();
   if (q) params.set('search', q);
+  if (stage) params.set('stage', stage);
   params.set('page', cPage.page); params.set('pageSize', cPage.pageSize);
   const resp = await api('/api/customers?' + params);
   const list = resp.items || resp;
@@ -680,18 +703,20 @@ async function renderCustomers() {
     <div class="panel">
       <div class="toolbar">
         <div class="field"><label>搜索客户</label><input class="input search" id="cSearch" placeholder="姓名 / 电话 / 学校 / 来源" value="${esc(q)}"></div>
+        <div class="field"><label>生命周期</label><select class="select" id="cStage"><option value="">全部</option>${STAGES.map((x) => `<option ${stage === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
         <div class="spacer"></div>
         <button class="btn danger" id="batchDelC" disabled>批量删除</button>
         <span class="tag gray">共 ${cPage.total} 位客户</span>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th style="width:30px"><input type="checkbox" id="cCheckAll" title="全选当前列表"></th><th>姓名</th><th>性别</th><th>年龄</th><th>电话</th><th>学校</th><th>来源</th><th class="num">消费次数</th><th class="num">累计金额</th><th>最近配镜</th><th>操作</th></tr></thead>
+          <thead><tr><th style="width:30px"><input type="checkbox" id="cCheckAll" title="全选当前列表"></th><th>姓名</th><th>阶段</th><th>性别</th><th>年龄</th><th>电话</th><th>学校</th><th>来源</th><th class="num">消费次数</th><th class="num">累计金额</th><th>最近配镜</th><th>操作</th></tr></thead>
           <tbody>
             ${list.length ? list.map((c) => `
               <tr>
                 <td><input type="checkbox" data-ccheck="${esc(c.id)}"></td>
                 <td><span class="link" data-customer="${esc(c.id)}">${esc(c.name)}</span></td>
+                <td><span class="tag ${STAGE_COLOR[c.lifecycleStage] || ''}">${esc(c.lifecycleStage || '—')}</span></td>
                 <td>${esc(c.gender || '—')}</td>
                 <td>${esc(c.age || '—')}</td>
                 <td class="muted">${esc(c.phone || '—')}</td>
@@ -704,7 +729,7 @@ async function renderCustomers() {
                   <button class="btn sm" data-editc="${esc(c.id)}">编辑</button>
                   <button class="btn sm danger" data-delc="${esc(c.id)}">删除</button>
                 </div></td>
-              </tr>`).join('') : '<tr><td colspan="11"><div class="empty"><div class="big">☺</div>还没有客户，点右上角新增</div></td></tr>'}
+              </tr>`).join('') : '<tr><td colspan="12"><div class="empty"><div class="big">☺</div>还没有客户，点右上角新增</div></td></tr>'}
           </tbody>
         </table>
       </div>
@@ -716,6 +741,7 @@ async function renderCustomers() {
     clearTimeout(t);
     t = setTimeout(() => { state._customerSearch = e.target.value.trim(); cPage.page = 1; renderCustomers(); }, 250);
   });
+  $('#cStage').addEventListener('change', (e) => { state._customerStage = e.target.value; cPage.page = 1; renderCustomers(); });
   bindPager('c', cPage, renderCustomers);
   $('#addCustomer').addEventListener('click', () => openCustomerForm());
   $$('[data-customer]').forEach((el) => el.addEventListener('click', () => showCustomer(el.dataset.customer)));
@@ -810,7 +836,7 @@ async function showCustomer(id) {
       <div class="detail-head">
         <div class="avatar">${esc((c.name || '?').slice(0, 1))}</div>
         <div>
-          <div class="detail-name">${esc(c.name)}</div>
+          <div class="detail-name">${esc(c.name)} <span class="tag ${STAGE_COLOR[c.lifecycleStage] || ''}" style="margin-left:6px">${esc(c.lifecycleStage || '')}</span></div>
           <div class="detail-meta">${esc(c.gender || '—')} · ${esc(c.age || '—')} 岁 · ${esc(c.phone || '无电话')} · ${esc(c.school || '')}</div>
           <div class="detail-meta">来源：${esc(c.source || '—')} ${c.sourceDetail ? ' / ' + esc(c.sourceDetail) : ''}</div>
         </div>
@@ -1280,25 +1306,34 @@ async function openGrantCoupon(couponId) {
 }
 
 /* ---------------- 回访提醒 ---------------- */
+const FU_PRODUCT_COLOR = { 'OK镜': 'orange', '离焦防控镜': 'orange', '隐形眼镜': 'green', '视训': 'green' };
 async function renderFollowups() {
-  const [sugg, history] = await Promise.all([api('/api/followups/suggestions'), api('/api/followups')]);
+  const [allSugg, history] = await Promise.all([api('/api/followups/suggestions'), api('/api/followups')]);
+  const fp = state._fuProduct || '';
+  const sugg = fp ? allSugg.filter((s) => s.productType === fp) : allSugg;
   const due = sugg.filter((s) => s.overdue || s.daysDiff <= 0);
   const soon = sugg.filter((s) => !s.overdue && s.daysDiff > 0);
+  const products = [...new Set(allSugg.map((s) => s.productType))];
+  const fuPageSize = 30;
+  const fuPages = Math.max(1, Math.ceil(sugg.length / fuPageSize));
+  const fuPage = Math.min(state._fuPage || 1, fuPages);
+  const pageItems = sugg.slice((fuPage - 1) * fuPageSize, fuPage * fuPageSize);
   $('#topActions').innerHTML = `<span class="tag orange">待回访 ${due.length}</span><span class="tag gray">未来 7 天 ${soon.length}</span>`;
 
   const card = (s) => `
     <div class="panel" style="margin-bottom:12px">
       <div class="panel-body" style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
         <div style="flex:0 0 auto">
-          <span class="tag ${s.type === '隐形复购提醒' ? 'green' : s.type === '视力复查提醒' ? 'orange' : ''}">${esc(s.type)}</span>
-          <div style="margin-top:8px;font-size:12px" class="${s.overdue ? '' : 'muted'}">
+          <span class="tag ${FU_PRODUCT_COLOR[s.productType] || ''}">${esc(s.productType)}</span>
+          <div style="font-size:12px;font-weight:600;margin-top:6px">${esc(s.stageLabel || s.type)}</div>
+          <div style="margin-top:6px;font-size:12px" class="${s.overdue ? '' : 'muted'}">
             ${s.overdue ? `<b style="color:var(--danger)">已逾期 ${-s.daysDiff} 天</b>` : `${s.daysDiff} 天后到期`}
           </div>
         </div>
         <div style="flex:1;min-width:220px">
           <div style="font-weight:650;font-size:15px"><span class="link" data-customer="${esc(s.customerId)}">${esc(s.customerName)}</span>
             <span class="muted" style="font-weight:400;font-size:12px"> ${esc(s.phone || '无电话')} · ${esc(s.age || '—')} 岁 ${s.school ? '· ' + esc(s.school) : ''}</span></div>
-          <div class="muted" style="font-size:12px;margin-top:4px">上次配镜 ${esc(s.lastDate)} · ${esc(s.lastCategory || '—')} · ${money(s.lastAmount)} · 应回访日期 ${esc(s.dueDate)}</div>
+          <div class="muted" style="font-size:12px;margin-top:4px">上次配镜 ${esc(s.lastDate)} · ${esc(s.lastCategory || '—')} · ${money(s.lastAmount)} · 应复查日期 ${esc(s.dueDate)}</div>
           <div style="font-size:12px;color:#475569;background:#f8fbff;border-radius:8px;padding:8px 10px;margin-top:8px;line-height:1.6">💬 ${esc(s.script)}</div>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px">
@@ -1309,8 +1344,17 @@ async function renderFollowups() {
     </div>`;
 
   $('#view').innerHTML = `
-    ${due.length ? due.map(card).join('') : '<div class="panel"><div class="empty"><div class="big">✓</div>太棒了，当前没有到期未回访的客户</div></div>'}
-    ${soon.length ? `<div class="section-title" style="margin:18px 0 10px">未来 7 天即将到期</div>${soon.map(card).join('')}` : ''}
+    <div class="panel" style="margin-bottom:14px"><div class="toolbar">
+      <div class="field"><label>产品类型</label><select class="select" id="fuProduct"><option value="">全部</option>${products.map((x) => `<option ${fp === x ? 'selected' : ''}>${esc(x)}</option>`).join('')}</select></div>
+      <div class="spacer"></div>
+      <span class="muted" style="font-size:12px">随访按临床规范自动生成（OK镜 1天/1周/2周/1月/3月/每2-3月；防控每3月眼轴）</span>
+    </div></div>
+    ${pageItems.length ? pageItems.map(card).join('') : '<div class="panel"><div class="empty"><div class="big">✓</div>太棒了，当前没有到期未回访的客户</div></div>'}
+    ${sugg.length > fuPageSize ? `<div class="panel" style="margin-top:12px"><div style="display:flex;gap:8px;align-items:center;padding:10px 4px;flex-wrap:wrap">
+      <button class="btn sm" id="fuPrev" ${fuPage <= 1 ? 'disabled' : ''}>上一页</button>
+      <span class="muted" style="font-size:12px">第 ${fuPage} / ${fuPages} 页 · 共 ${sugg.length} 条待回访</span>
+      <button class="btn sm" id="fuNext" ${fuPage >= fuPages ? 'disabled' : ''}>下一页</button>
+    </div></div>` : ''}
     <div class="panel" style="margin-top:18px">
       <div class="panel-head"><div class="panel-title">回访记录</div><span class="tag gray">${history.length} 条</span></div>
       <div class="table-wrap"><table>
@@ -1321,6 +1365,10 @@ async function renderFollowups() {
       </table></div>
     </div>`;
 
+  $('#fuProduct').addEventListener('change', (e) => { state._fuProduct = e.target.value; state._fuPage = 1; renderFollowups(); });
+  const fuPrev = $('#fuPrev'), fuNext = $('#fuNext');
+  if (fuPrev) fuPrev.onclick = () => { state._fuPage = fuPage - 1; renderFollowups(); };
+  if (fuNext) fuNext.onclick = () => { state._fuPage = fuPage + 1; renderFollowups(); };
   const findSugg = (key) => sugg.find((s) => s.key === key);
   const mark = (key, status) => {
     const s = findSugg(key); if (!s) return;
@@ -1331,7 +1379,7 @@ async function renderFollowups() {
     });
     $('[data-cancel]', root).addEventListener('click', close);
     $('#fuSave', root).addEventListener('click', async () => {
-      try { await api('/api/followups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId: s.customerId, type: s.type, basedOn: s.basedOn, status, note: $('#fuNote', root).value.trim() }) }); close(); toast(status === 'done' ? '已记录回访' : '已跳过'); renderFollowups(); }
+      try { await api('/api/followups', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId: s.customerId, type: s.type, basedOn: s.basedOn, productType: s.productType, stageIndex: s.stageIndex, stageLabel: s.stageLabel, status, note: $('#fuNote', root).value.trim() }) }); close(); toast(status === 'done' ? '已记录回访' : '已跳过'); renderFollowups(); }
       catch (e) { toast(e.message, 'error'); }
     });
   };
@@ -1423,7 +1471,7 @@ function renderImport() {
           <div class="dropzone" id="dropzone">
             <div class="big">⇪</div>
             <div class="t1">点击选择 Excel，或把文件拖到这里</div>
-            <div class="t2">表头需包含：备注、日期、姓名、性别、年龄、电话、学校、来源、来源明细、金额、医生、销售、制作、公司、分类方式、框/产品、型号、片、度数R、度数L、瞳距、RPD、LPD、瞳高R、瞳高L</div>
+            <div class="t2">表头需包含：备注、日期、姓名、性别、年龄、电话、学校、来源、来源明细、金额、医生、销售、制作、公司、分类方式、框/产品、型号、片、度数R、度数L、瞳距、RPD、LPD、瞳高R、瞳高L、产品类型、抛弃周期</div>
             <input type="file" id="fileInput" accept=".xlsx,.xls" style="display:none">
           </div>
           <div id="fileName" class="muted" style="margin-top:10px;font-size:12px"></div>
@@ -1548,19 +1596,22 @@ function openSettings() {
       </div>
     </div>
     <div class="form-section">
-      <div class="section-title">回访规则（配镜后多少天提醒回访）</div>
-      <div class="form-grid">
-        ${(() => {
-          const defaults = [{ type: '佩戴适应回访', days: 7 }, { type: '视力复查提醒', days: 90 }, { type: '隐形复购提醒', days: 90 }];
-          const cfg = Array.isArray(s.followUpRules) ? s.followUpRules : [];
-          return defaults.map((d, i) => {
-            const c = cfg.find((x) => x && x.type === d.type);
-            const days = c && Number(c.days) > 0 ? Number(c.days) : d.days;
-            return `<div class="field"><label>${esc(d.type)}（天）</label><input class="input" id="fuDays${i}" data-futype="${esc(d.type)}" type="number" min="1" max="3650" value="${days}"></div>`;
-          }).join('');
-        })()}
-      </div>
-      <div class="hint">视力复查默认 3 个月（90 天）。改完立即生效，只影响之后的提醒计算，已处理的回访记录不受影响。</div>
+      <div class="section-title">临床随访规则（按产品类型，配镜后多少天提醒）</div>
+      ${(() => {
+        const templates = Array.isArray(s.followupTemplates) ? s.followupTemplates : [];
+        return templates.map((t) => `
+          <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:10px">
+            <div style="font-weight:600;font-size:13px;margin-bottom:8px">${esc(t.productType)}
+              <span class="muted" style="font-weight:400;font-size:12px"> · 周期复查间隔</span>
+              <input class="input" style="width:64px;display:inline-block;padding:4px 6px" data-ftr="${esc(t.productType)}" type="number" min="0" max="3650" value="${Number(t.repeatDays) || 0}">
+              <span class="muted" style="font-size:12px">天（0=不循环）</span>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:8px">
+              ${(t.stages || []).map((st, i) => `<div class="field" style="min-width:118px"><label style="font-size:11px">${esc(st.label)}</label><input class="input" data-ft="${esc(t.productType)}" data-stage="${i}" type="number" min="1" max="3650" value="${st.days}"></div>`).join('')}
+            </div>
+          </div>`).join('');
+      })()}
+      <div class="hint">默认对齐临床共识：OK镜 1/7/14/30/90 天 + 每 90 天；离焦防控 30/90/180 天 + 每 90 天眼轴。改完立即生效，已处理的回访不受影响。</div>
     </div>
     <div class="form-section">
       <div class="section-title">下拉选项（每行一个）</div>
@@ -1597,7 +1648,11 @@ function openSettings() {
       sources: lines($('#setSources', root).value),
       categories: lines($('#setCategories', root).value),
       staffRoles: lines($('#setStaffRoles', root).value),
-      followUpRules: $$('[data-futype]', root).map((el) => ({ type: el.dataset.futype, days: Math.max(1, Math.floor(Number(el.value) || 1)) })),
+      followupTemplates: [...new Set($$('[data-ft]', root).map((el) => el.dataset.ft))].map((pt) => ({
+        productType: pt,
+        stages: $$('[data-ft="' + pt + '"]', root).map((el) => ({ days: Math.max(1, Math.floor(Number(el.value) || 1)) })),
+        repeatDays: Math.max(0, Math.floor(Number(($('[data-ftr="' + pt + '"]', root) || {}).value) || 0)),
+      })),
     };
     try {
       const r = await api('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
