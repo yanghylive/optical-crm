@@ -233,9 +233,27 @@ function saveDB() {
 }
 
 function customerById(id) { return db.customers.find((c) => c.id === id); }
-function enrichPrescription(p) {
-  const c = customerById(p.customerId) || {};
+/* 性能：批量场景用 Map/分组索引，避免逐条线性查找（O(n×m) → O(n+m)） */
+function buildCustMap() { return new Map(db.customers.map((c) => [c.id, c])); }
+function groupPrescriptionsByCustomer() {
+  const m = new Map();
+  for (const p of db.prescriptions) {
+    if (!m.has(p.customerId)) m.set(p.customerId, []);
+    m.get(p.customerId).push(p);
+  }
+  return m;
+}
+function enrichPrescription(p, cmap) {
+  const c = (cmap && typeof cmap.get === 'function' ? cmap.get(p.customerId) : customerById(p.customerId)) || {};
   return { ...p, customerName: c.name || '未知客户', phone: c.phone || '', gender: c.gender || '', age: c.age || '', school: c.school || '', source: c.source || '', sourceDetail: c.sourceDetail || '' };
+}
+/* 分页：传 pageSize 时返回 {items,total,page,pageSize}，否则返回数组（向后兼容） */
+function paginate(list, req, res) {
+  const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 0, 0), 500);
+  if (!pageSize) return res.json(list);
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  const total = list.length;
+  res.json({ items: list.slice((page - 1) * pageSize, page * pageSize), total, page, pageSize });
 }
 
 /* ---------------- 统计 ---------------- */
@@ -309,7 +327,7 @@ function lanUrls() {
 }
 
 /* 健康检查：不返回任何业务数据，供 Docker / 负载均衡探活 */
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.1.0', time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.2.0', time: new Date().toISOString() }));
 
 app.post('/api/login', (req, res) => {
   const { password } = req.body || {};
@@ -355,10 +373,14 @@ function followupSuggestions() {
   const today = todayISO();
   const horizon = addDays(today, 7);
   const handled = new Set(db.followUps.filter((f) => f.status !== 'pending').map((f) => f.customerId + '|' + f.type + '|' + f.basedOn));
+  const byCust = groupPrescriptionsByCustomer();
+  for (const arr of byCust.values()) arr.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const rules = followupRules();
   const out = [];
   for (const c of db.customers) {
-    const ps = db.prescriptions.filter((p) => p.customerId === c.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-    for (const rule of followupRules()) {
+    const ps = byCust.get(c.id) || [];
+    if (!ps.length) continue;
+    for (const rule of rules) {
       const p = ps.find((x) => rule.match(x, c));
       if (!p) continue;
       const key = c.id + '|' + rule.type + '|' + p.id;
@@ -703,14 +725,17 @@ app.get('/api/stats', (req, res) => res.json(stats()));
 
 app.get('/api/customers', (req, res) => {
   const q = String(req.query.search || '').trim().toLowerCase();
+  const byCust = groupPrescriptionsByCustomer();
   const list = db.customers
     .filter((c) => !q || [c.name, c.phone, c.school, c.source].join(' ').toLowerCase().includes(q))
     .map((c) => {
-      const ps = db.prescriptions.filter((p) => p.customerId === c.id);
-      return { ...c, orderCount: ps.length, totalAmount: ps.reduce((s, p) => s + Number(p.amount || 0), 0), lastDate: ps.map((p) => p.date).sort().pop() || '' };
+      const ps = byCust.get(c.id) || [];
+      let totalAmount = 0, lastDate = '';
+      for (const p of ps) { totalAmount += Number(p.amount || 0); if ((p.date || '') > lastDate) lastDate = p.date || ''; }
+      return { ...c, orderCount: ps.length, totalAmount, lastDate };
     })
     .sort((a, b) => (b.lastDate || '').localeCompare(a.lastDate || ''));
-  res.json(list);
+  paginate(list, req, res);
 });
 
 app.get('/api/customers/:id', (req, res) => {
@@ -765,7 +790,8 @@ app.post('/api/customers/batch-delete', (req, res) => {
 app.get('/api/prescriptions', (req, res) => {
   const { from, to, source, category, sales, search } = req.query;
   const q = String(search || '').trim().toLowerCase();
-  let list = db.prescriptions.map(enrichPrescription);
+  const cmap = buildCustMap();
+  let list = db.prescriptions.map((p) => enrichPrescription(p, cmap));
   if (from) list = list.filter((p) => p.date >= from);
   if (to) list = list.filter((p) => p.date <= to);
   if (source) list = list.filter((p) => p.source === source);
@@ -773,7 +799,7 @@ app.get('/api/prescriptions', (req, res) => {
   if (sales) list = list.filter((p) => p.sales === sales);
   if (q) list = list.filter((p) => [p.customerName, p.phone, p.frame, p.model, p.lens, p.sales, p.doctor].join(' ').toLowerCase().includes(q));
   list.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
-  res.json(list);
+  paginate(list, req, res);
 });
 
 app.post('/api/prescriptions', (req, res) => {
@@ -953,7 +979,8 @@ async function readExcelRows(buffer) {
   const ws = wb.worksheets[0];
   if (!ws) return [];
   const headers = [];
-  ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => { headers[col] = cellText(cell.value).trim(); });
+  // 表头规范化：去掉换行/空格（原表常见「分类\n方式」「来源\n明细」「金额 」），避免列识别失败
+  ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => { headers[col] = cellText(cell.value).replace(/\s+/g, ''); });
   const maxCol = headers.length - 1;
   const rows = [];
   for (let r = 2; r <= ws.rowCount; r++) {
@@ -1037,14 +1064,24 @@ app.post('/api/import', upload.single('file'), async (req, res) => {
         if (!c.source && get('来源')) c.source = String(get('来源'));
       }
 
+      // 验光数据：兼容单列「瞳高」、组合瞳距「RPD/LPD/瞳高」、RPD/LPD 列混入非数值
+      let pd = String(get('瞳距') || ''), rpd = String(get('RPD') || ''), lpd = String(get('LPD') || '');
+      let phR = String(get('瞳高R') || get('瞳高') || ''), phL = String(get('瞳高L') || '');
+      const num = (s) => /^\d+(\.\d+)?$/.test(String(s).trim());
+      if (pd.includes('/')) {
+        const parts = pd.split('/').map((s) => s.trim()).filter(Boolean);
+        if (parts.length === 3 && parts.every(num)) { if (!rpd) rpd = parts[0]; if (!lpd) lpd = parts[1]; if (!phR) phR = parts[2]; pd = ''; }
+        else if (parts.length === 2 && parts.every(num)) { if (!rpd) rpd = parts[0]; if (!lpd) lpd = parts[1]; pd = ''; }
+      }
+      if (rpd && !num(rpd)) rpd = '';
+      if (lpd && !num(lpd)) lpd = '';
       db.prescriptions.push({
         id: uid('p_'), customerId: c.id, date, amount,
         doctor: String(get('医生') || ''), sales: String(get('销售') || ''), maker: String(get('制作') || ''),
         company: String(get('公司') || ''), category: String(get('分类方式') || ''),
-        frame: String(get('框/产品') || ''), model: String(get('型号') || ''), lens: String(get('片') || ''),
+        frame: String(get('框/产品') || get('框') || ''), model: String(get('型号') || ''), lens: String(get('片') || ''),
         sphR: String(get('度数R') || ''), sphL: String(get('度数L') || ''),
-        pd: get('瞳距') || '', rpd: get('RPD') || '', lpd: get('LPD') || '',
-        phR: get('瞳高R') || '', phL: get('瞳高L') || '',
+        pd, rpd, lpd, phR, phL,
         remark: String(get('备注') || ''), createdAt: new Date().toISOString(),
       });
       createdOrders++;
@@ -1102,7 +1139,8 @@ app.post('/api/admin/clear-demo', (req, res) => {
 });
 
 app.get('/api/export', async (req, res) => {
-  const list = db.prescriptions.map(enrichPrescription).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const cmap = buildCustMap();
+  const list = db.prescriptions.map((p) => enrichPrescription(p, cmap)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const data = list.map((p) => ({
     '备注': p.remark || '', '日期': p.date || '', '姓名': p.customerName, '性别': p.gender, '年龄': p.age,
     '电话': p.phone, '学校': p.school, '来源': p.source, '来源明细': p.sourceDetail, '金额': p.amount,

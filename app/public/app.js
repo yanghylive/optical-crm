@@ -270,14 +270,35 @@ function statCard(label, value, foot, cls) {
 
 /* ---------------- 配镜记录 ---------------- */
 const filter = { from: '', to: '', source: '', category: '', sales: '', search: '' };
+const pPage = { page: 1, pageSize: 100, total: 0 };
+const cPage = { page: 1, pageSize: 100, total: 0 };
+/* 分页控件（服务端分页，避免一次渲染上万行） */
+function pagerHtml(id, pg) {
+  const pages = Math.max(1, Math.ceil(pg.total / pg.pageSize));
+  return `<div style="display:flex;gap:8px;align-items:center;padding:10px 4px;flex-wrap:wrap">
+    <button class="btn sm" id="${id}Prev" ${pg.page <= 1 ? 'disabled' : ''}>上一页</button>
+    <span class="muted" style="font-size:12px">第 ${pg.page} / ${pages} 页 · 共 ${pg.total} 条</span>
+    <button class="btn sm" id="${id}Next" ${pg.page >= pages ? 'disabled' : ''}>下一页</button>
+  </div>`;
+}
+function bindPager(id, pg, onChange) {
+  const pages = Math.max(1, Math.ceil(pg.total / pg.pageSize));
+  const prev = $('#' + id + 'Prev'), next = $('#' + id + 'Next');
+  if (prev) prev.onclick = () => { if (pg.page > 1) { pg.page--; onChange(); } };
+  if (next) next.onclick = () => { if (pg.page < pages) { pg.page++; onChange(); } };
+}
 
 async function renderPrescriptions() {
-  const [list, customers, staff, members] = await Promise.all([
-    api('/api/prescriptions?' + new URLSearchParams(Object.fromEntries(Object.entries(filter).filter(([, v]) => v)))),
+  const params = new URLSearchParams(Object.fromEntries(Object.entries(filter).filter(([, v]) => v)));
+  params.set('page', pPage.page); params.set('pageSize', pPage.pageSize);
+  const [resp, customers, staff, members] = await Promise.all([
+    api('/api/prescriptions?' + params),
     api('/api/customers'),
     api('/api/staff'),
     api('/api/members'),
   ]);
+  const list = resp.items || resp;
+  pPage.total = resp.total != null ? resp.total : list.length;
   state.prescriptions = list;
   state.customers = customers;
   state.staff = staff;
@@ -314,13 +335,19 @@ async function renderPrescriptions() {
           <tbody id="pBody">${prescriptionRows(list)}</tbody>
         </table>
       </div>
+      <div id="pPager">${pagerHtml('p', pPage)}</div>
     </div>`;
 
   const refresh = async () => {
     const q = new URLSearchParams(Object.fromEntries(Object.entries(filter).filter(([, v]) => v)));
-    const rows = await api('/api/prescriptions?' + q);
+    q.set('page', pPage.page); q.set('pageSize', pPage.pageSize);
+    const r = await api('/api/prescriptions?' + q);
+    const rows = r.items || r;
+    pPage.total = r.total != null ? r.total : rows.length;
     state.prescriptions = rows;
     $('#pBody').innerHTML = prescriptionRows(rows);
+    $('#pPager').innerHTML = pagerHtml('p', pPage);
+    bindPager('p', pPage, refresh);
     bindRowActions();
     bindPChecks();
   };
@@ -328,15 +355,18 @@ async function renderPrescriptions() {
     filter.from = $('#fFrom').value; filter.to = $('#fTo').value;
     filter.source = $('#fSource').value; filter.category = $('#fCategory').value;
     filter.sales = $('#fSales').value; filter.search = $('#fSearch').value.trim();
+    pPage.page = 1;
     refresh();
   };
   ['fFrom', 'fTo', 'fSource', 'fCategory', 'fSales'].forEach((id) => $('#' + id).addEventListener('change', readFilters));
   let t; $('#fSearch').addEventListener('input', () => { clearTimeout(t); t = setTimeout(readFilters, 250); });
   $('#resetFilter').addEventListener('click', () => {
     Object.assign(filter, { from: '', to: '', source: '', category: '', sales: '', search: '' });
+    pPage.page = 1;
     renderPrescriptions();
   });
   $('#addPrescription').addEventListener('click', () => openPrescriptionForm());
+  bindPager('p', pPage, refresh);
   bindRowActions();
 
   // 批量删除：勾选状态跨筛选保留，删除前二次确认
@@ -393,7 +423,7 @@ function prescriptionRows(list) {
       <td class="muted">${esc(p.model || '—')}</td>
       <td class="muted">${esc(p.sphR || '—')}</td>
       <td class="muted">${esc(p.sphL || '—')}</td>
-      <td class="muted">${p.phR || p.phL ? esc((p.phR || '—') + ' / ' + (p.phL || '—')) : '—'}</td>
+      <td class="muted">${p.phR && p.phL ? esc(p.phR + ' / ' + p.phL) : esc(p.phR || p.phL || '—')}</td>
       <td>${esc(p.sales || '—')}</td>
       <td class="muted">${esc(p.doctor || '—')}</td>
       <td><div class="actions">
@@ -638,7 +668,12 @@ function openPrescriptionForm(p = null) {
 /* ---------------- 客户管理 ---------------- */
 async function renderCustomers() {
   const q = state._customerSearch || '';
-  const list = await api('/api/customers' + (q ? '?search=' + encodeURIComponent(q) : ''));
+  const params = new URLSearchParams();
+  if (q) params.set('search', q);
+  params.set('page', cPage.page); params.set('pageSize', cPage.pageSize);
+  const resp = await api('/api/customers?' + params);
+  const list = resp.items || resp;
+  cPage.total = resp.total != null ? resp.total : list.length;
   state.customers = list;
   $('#topActions').innerHTML = `<button class="btn primary" id="addCustomer">＋ 新增客户</button>`;
   $('#view').innerHTML = `
@@ -647,7 +682,7 @@ async function renderCustomers() {
         <div class="field"><label>搜索客户</label><input class="input search" id="cSearch" placeholder="姓名 / 电话 / 学校 / 来源" value="${esc(q)}"></div>
         <div class="spacer"></div>
         <button class="btn danger" id="batchDelC" disabled>批量删除</button>
-        <span class="tag gray">共 ${list.length} 位客户</span>
+        <span class="tag gray">共 ${cPage.total} 位客户</span>
       </div>
       <div class="table-wrap">
         <table>
@@ -673,13 +708,15 @@ async function renderCustomers() {
           </tbody>
         </table>
       </div>
+      <div id="cPager">${pagerHtml('c', cPage)}</div>
     </div>`;
 
   let t;
   $('#cSearch').addEventListener('input', (e) => {
     clearTimeout(t);
-    t = setTimeout(() => { state._customerSearch = e.target.value.trim(); renderCustomers(); }, 250);
+    t = setTimeout(() => { state._customerSearch = e.target.value.trim(); cPage.page = 1; renderCustomers(); }, 250);
   });
+  bindPager('c', cPage, renderCustomers);
   $('#addCustomer').addEventListener('click', () => openCustomerForm());
   $$('[data-customer]').forEach((el) => el.addEventListener('click', () => showCustomer(el.dataset.customer)));
   $$('[data-editc]').forEach((el) => el.addEventListener('click', () => {
@@ -791,7 +828,7 @@ async function showCustomer(id) {
             <thead><tr><th>日期</th><th class="num">金额</th><th>分类</th><th>框/产品</th><th>度数R</th><th>度数L</th><th>瞳高R/L</th><th>销售</th></tr></thead>
             <tbody>
               ${c.prescriptions.length ? c.prescriptions.map((p) => `
-                <tr><td class="muted">${esc(p.date)}</td><td class="num money">${money(p.amount)}</td><td><span class="tag">${esc(p.category || '—')}</span></td><td>${esc(p.frame || '—')}</td><td class="muted">${esc(p.sphR || '—')}</td><td class="muted">${esc(p.sphL || '—')}</td><td class="muted">${p.phR || p.phL ? esc((p.phR || '—') + ' / ' + (p.phL || '—')) : '—'}</td><td>${esc(p.sales || '—')}</td></tr>`).join('') : '<tr><td colspan="8"><div class="empty">还没有配镜记录</div></td></tr>'}
+                <tr><td class="muted">${esc(p.date)}</td><td class="num money">${money(p.amount)}</td><td><span class="tag">${esc(p.category || '—')}</span></td><td>${esc(p.frame || '—')}</td><td class="muted">${esc(p.sphR || '—')}</td><td class="muted">${esc(p.sphL || '—')}</td><td class="muted">${p.phR && p.phL ? esc(p.phR + ' / ' + p.phL) : esc(p.phR || p.phL || '—')}</td><td>${esc(p.sales || '—')}</td></tr>`).join('') : '<tr><td colspan="8"><div class="empty">还没有配镜记录</div></td></tr>'}
             </tbody>
           </table>
         </div>
