@@ -6,6 +6,38 @@
 
 ---
 
+## 〇、v1.1.0 功能更新部署记录（2026-11-27 16:26 北京时间）
+
+**内容**：销售反馈四项 —— 瞳高 phR/phL、选老客户筛选、回访天数可配置（视力复查默认 90 天）、批量删除。代码见 GitHub `yanghylive/optical-crm`（commit `5c3ff30` 起）。
+
+**流程**（与首次部署一致，全程复用）：
+1. 本机 `tar -czf`（只打 app/，排除 data/node_modules/审计产物），66,666 字节
+2. Node 脚本签名 PUT 到 OSS `kaypal/optical-crm/optical-update-1.1.0.tar.gz`（凭据取自 `Downloads/KayPal相关.txt`）
+3. 浏览器登录 1Panel → 注入 `__api`/`__run` helper（借计划任务执行 shell，输出写 `/opt/optical-crm/.out` 再经 `/files/content` 读回）
+4. 服务器内网端点下载，**SHA-256 比对一致**（`37698705a99b7c61…`）
+5. `cp -a app app.bak-20261127-162526` + `cp data/db.json data/db.pre-update.json`
+6. 解包 → `chown -R 1000:1000 app data` → `docker compose build --no-cache optical` → `up -d`
+7. 探活 `/api/health` → **1.1.0**；公网首页 200、0 控制台报错；线上 app.js 含全部四项新代码
+8. **删除 OSS 临时对象**（DELETE 204）；**删除部署探测计划任务**（避免残留脚本误触发）
+
+**数据完好**：客户 6659 / 配镜 7635（店主已导入历史数据），升级未丢数据；老库自愈补上 `settings.followUpRules` 默认值。历史单无瞳高字段，列表显示「—」，属预期。
+
+**⚠️ 本次发现并修复**：1Panel 里「配镜CRM-每日备份」计划任务**不见了**（最后备份停在 11-26）。已重建（id=2，`30 23 * * *`，`bash /opt/optical-crm/backup.sh`），并立即手动备份一次（`db-20261127-162500.json.gz`，474KB）。**以后每次动服务器先确认这个任务还在。**
+
+**⚠️ 待店主本人做（安全）**：线上密码**仍是 admin123**，且 `mustChange=false`（首次强制改密已被绕过/重置）。6659 位真实客户数据在即，**请尽快在「改密码」里设一个强密码**。
+
+**回滚**（如需）：
+```bash
+cd /opt/optical-crm
+docker compose stop optical
+rm -rf app && mv app.bak-20261127-162526 app
+cp data/db.pre-update.json data/db.json
+chown -R 1000:1000 app data
+docker compose build --no-cache optical && docker compose up -d optical
+```
+
+---
+
 ## 一、为什么落在这台，而不是正式服
 
 | 服务器 | 用途 | 我有的访问方式 |
