@@ -1308,17 +1308,19 @@ async function openGrantCoupon(couponId) {
 /* ---------------- 回访提醒 ---------------- */
 const FU_PRODUCT_COLOR = { 'OK镜': 'orange', '离焦防控镜': 'orange', '隐形眼镜': 'green', '视训': 'green' };
 async function renderFollowups() {
-  const [allSugg, history] = await Promise.all([api('/api/followups/suggestions'), api('/api/followups')]);
   const fp = state._fuProduct || '';
-  const sugg = fp ? allSugg.filter((s) => s.productType === fp) : allSugg;
-  const due = sugg.filter((s) => s.overdue || s.daysDiff <= 0);
-  const soon = sugg.filter((s) => !s.overdue && s.daysDiff > 0);
-  const products = [...new Set(allSugg.map((s) => s.productType))];
   const fuPageSize = 30;
-  const fuPages = Math.max(1, Math.ceil(sugg.length / fuPageSize));
-  const fuPage = Math.min(state._fuPage || 1, fuPages);
-  const pageItems = sugg.slice((fuPage - 1) * fuPageSize, fuPage * fuPageSize);
-  $('#topActions').innerHTML = `<span class="tag orange">待回访 ${due.length}</span><span class="tag gray">未来 7 天 ${soon.length}</span>`;
+  const fuPage = state._fuPage || 1;
+  const params = new URLSearchParams({ page: fuPage, pageSize: fuPageSize });
+  if (fp) params.set('productType', fp);
+  const [resp, history] = await Promise.all([api('/api/followups/suggestions?' + params), api('/api/followups')]);
+  const pageItems = resp.items || [];
+  const total = resp.total || 0;
+  const dueCount = resp.dueCount || 0;
+  const soonCount = resp.soonCount || 0;
+  const products = resp.products || [];
+  const fuPages = Math.max(1, Math.ceil(total / fuPageSize));
+  $('#topActions').innerHTML = `<span class="tag orange">待回访 ${dueCount}</span><span class="tag gray">未来 7 天 ${soonCount}</span>`;
 
   const card = (s) => `
     <div class="panel" style="margin-bottom:12px">
@@ -1350,9 +1352,9 @@ async function renderFollowups() {
       <span class="muted" style="font-size:12px">随访按临床规范自动生成（OK镜 1天/1周/2周/1月/3月/每2-3月；防控每3月眼轴）</span>
     </div></div>
     ${pageItems.length ? pageItems.map(card).join('') : '<div class="panel"><div class="empty"><div class="big">✓</div>太棒了，当前没有到期未回访的客户</div></div>'}
-    ${sugg.length > fuPageSize ? `<div class="panel" style="margin-top:12px"><div style="display:flex;gap:8px;align-items:center;padding:10px 4px;flex-wrap:wrap">
+    ${total > fuPageSize ? `<div class="panel" style="margin-top:12px"><div style="display:flex;gap:8px;align-items:center;padding:10px 4px;flex-wrap:wrap">
       <button class="btn sm" id="fuPrev" ${fuPage <= 1 ? 'disabled' : ''}>上一页</button>
-      <span class="muted" style="font-size:12px">第 ${fuPage} / ${fuPages} 页 · 共 ${sugg.length} 条待回访</span>
+      <span class="muted" style="font-size:12px">第 ${fuPage} / ${fuPages} 页 · 共 ${total} 条待回访</span>
       <button class="btn sm" id="fuNext" ${fuPage >= fuPages ? 'disabled' : ''}>下一页</button>
     </div></div>` : ''}
     <div class="panel" style="margin-top:18px">
@@ -1369,7 +1371,7 @@ async function renderFollowups() {
   const fuPrev = $('#fuPrev'), fuNext = $('#fuNext');
   if (fuPrev) fuPrev.onclick = () => { state._fuPage = fuPage - 1; renderFollowups(); };
   if (fuNext) fuNext.onclick = () => { state._fuPage = fuPage + 1; renderFollowups(); };
-  const findSugg = (key) => sugg.find((s) => s.key === key);
+  const findSugg = (key) => pageItems.find((s) => s.key === key);
   const mark = (key, status) => {
     const s = findSugg(key); if (!s) return;
     const { root, close } = openModal({

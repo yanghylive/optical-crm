@@ -542,7 +542,18 @@ function reviewCompliance() {
   }
   return { due, onTime, rate: due ? onTime / due : 0 };
 }
-app.get('/api/followups/suggestions', (req, res) => res.json(followupSuggestions()));
+app.get('/api/followups/suggestions', (req, res) => {
+  const all = followupSuggestions();
+  // 无分页/筛选参数 → 返回数组（向后兼容）；否则服务端分页，只回传当页，避免大响应
+  if (!req.query.page && !req.query.pageSize && !req.query.productType) return res.json(all);
+  const pt = req.query.productType || '';
+  const filtered = pt ? all.filter((s) => s.productType === pt) : all;
+  const dueCount = filtered.filter((s) => s.overdue || s.daysDiff <= 0).length;
+  const products = [...new Set(all.map((s) => s.productType))];
+  const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 30, 1), 100);
+  const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
+  res.json({ items: filtered.slice((page - 1) * pageSize, page * pageSize), total: filtered.length, dueCount, soonCount: filtered.length - dueCount, products, page, pageSize });
+});
 app.get('/api/followups', (req, res) => res.json(db.followUps.slice().sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).map((f) => ({ ...f, customerName: (customerById(f.customerId) || {}).name || f.customerId }))));
 app.post('/api/followups', (req, res) => {
   const b = req.body || {};
