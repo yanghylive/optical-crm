@@ -134,6 +134,7 @@ const routes = {
   dashboard: { title: '工作台', sub: '今天的生意，一眼看清', render: renderDashboard },
   prescriptions: { title: '配镜记录', sub: '每一单配镜，都有完整处方', render: renderPrescriptions },
   customers: { title: '客户管理', sub: '客户档案与历史配镜记录', render: renderCustomers },
+  ops: { title: '客户运营', sub: 'RFM 分层 · 沉睡唤醒 · 家庭账户', render: renderOps },
   members: { title: '会员管理', sub: '储值、次卡、积分与等级', render: renderMembers },
   marketing: { title: '营销活动', sub: '优惠券、充值赠送、满减活动', render: renderMarketing },
   followups: { title: '回访提醒', sub: '该回访的客户，一个不漏', render: renderFollowups },
@@ -690,9 +691,11 @@ const STAGES = ['潜在', '新客', '活跃', '沉睡', '流失', '忠诚'];
 async function renderCustomers() {
   const q = state._customerSearch || '';
   const stage = state._customerStage || '';
+  const rfm = state._customerRfm || '';
   const params = new URLSearchParams();
   if (q) params.set('search', q);
   if (stage) params.set('stage', stage);
+  if (rfm) params.set('rfm', rfm);
   params.set('page', cPage.page); params.set('pageSize', cPage.pageSize);
   const resp = await api('/api/customers?' + params);
   const list = resp.items || resp;
@@ -704,19 +707,21 @@ async function renderCustomers() {
       <div class="toolbar">
         <div class="field"><label>搜索客户</label><input class="input search" id="cSearch" placeholder="姓名 / 电话 / 学校 / 来源" value="${esc(q)}"></div>
         <div class="field"><label>生命周期</label><select class="select" id="cStage"><option value="">全部</option>${STAGES.map((x) => `<option ${stage === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
+        <div class="field"><label>RFM 分层</label><select class="select" id="cRfm"><option value="">全部</option>${['重要价值', '重要发展', '重要保持', '重要挽留', '一般价值', '一般', '流失预警', '潜在'].map((x) => `<option ${rfm === x ? 'selected' : ''}>${x}</option>`).join('')}</select></div>
         <div class="spacer"></div>
         <button class="btn danger" id="batchDelC" disabled>批量删除</button>
         <span class="tag gray">共 ${cPage.total} 位客户</span>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th style="width:30px"><input type="checkbox" id="cCheckAll" title="全选当前列表"></th><th>姓名</th><th>阶段</th><th>性别</th><th>年龄</th><th>电话</th><th>学校</th><th>来源</th><th class="num">消费次数</th><th class="num">累计金额</th><th>最近配镜</th><th>操作</th></tr></thead>
+          <thead><tr><th style="width:30px"><input type="checkbox" id="cCheckAll" title="全选当前列表"></th><th>姓名</th><th>阶段</th><th>RFM</th><th>性别</th><th>年龄</th><th>电话</th><th>学校</th><th>来源</th><th class="num">消费次数</th><th class="num">累计金额</th><th>最近配镜</th><th>操作</th></tr></thead>
           <tbody>
             ${list.length ? list.map((c) => `
               <tr>
                 <td><input type="checkbox" data-ccheck="${esc(c.id)}"></td>
                 <td><span class="link" data-customer="${esc(c.id)}">${esc(c.name)}</span></td>
                 <td><span class="tag ${STAGE_COLOR[c.lifecycleStage] || ''}">${esc(c.lifecycleStage || '—')}</span></td>
+                <td><span class="tag ${RFM_COLOR[c.rfm && c.rfm.segment] || ''}">${esc(c.rfm ? c.rfm.segment : '—')}</span></td>
                 <td>${esc(c.gender || '—')}</td>
                 <td>${esc(c.age || '—')}</td>
                 <td class="muted">${esc(c.phone || '—')}</td>
@@ -729,7 +734,7 @@ async function renderCustomers() {
                   <button class="btn sm" data-editc="${esc(c.id)}">编辑</button>
                   <button class="btn sm danger" data-delc="${esc(c.id)}">删除</button>
                 </div></td>
-              </tr>`).join('') : '<tr><td colspan="12"><div class="empty"><div class="big">☺</div>还没有客户，点右上角新增</div></td></tr>'}
+              </tr>`).join('') : '<tr><td colspan="13"><div class="empty"><div class="big">☺</div>还没有客户，点右上角新增</div></td></tr>'}
           </tbody>
         </table>
       </div>
@@ -742,6 +747,7 @@ async function renderCustomers() {
     t = setTimeout(() => { state._customerSearch = e.target.value.trim(); cPage.page = 1; renderCustomers(); }, 250);
   });
   $('#cStage').addEventListener('change', (e) => { state._customerStage = e.target.value; cPage.page = 1; renderCustomers(); });
+  $('#cRfm').addEventListener('change', (e) => { state._customerRfm = e.target.value; cPage.page = 1; renderCustomers(); });
   bindPager('c', cPage, renderCustomers);
   $('#addCustomer').addEventListener('click', () => openCustomerForm());
   $$('[data-customer]').forEach((el) => el.addEventListener('click', () => showCustomer(el.dataset.customer)));
@@ -828,15 +834,82 @@ function openCustomerForm(c = null) {
   });
 }
 
+/* ---------------- P1-M5: 屈光发育档案 ---------------- */
+function alChart(recs) {
+  const pts = recs.filter((r) => Number(r.alR) > 0 || Number(r.alL) > 0);
+  if (pts.length < 2) return '';
+  const W = 560, H = 120, P = 24;
+  const vals = []; pts.forEach((r) => { if (Number(r.alR) > 0) vals.push(Number(r.alR)); if (Number(r.alL) > 0) vals.push(Number(r.alL)); });
+  const min = Math.min(...vals) - 0.1, max = Math.max(...vals) + 0.1;
+  const x = (i) => P + (W - 2 * P) * (i / (pts.length - 1));
+  const y = (v) => H - P - (H - 2 * P) * ((v - min) / (max - min));
+  const line = (key) => pts.map((r, i) => Number(r[key]) > 0 ? `${x(i).toFixed(1)},${y(Number(r[key])).toFixed(1)}` : null).filter(Boolean).join(' ');
+  return `<div style="margin-bottom:10px"><div class="muted" style="font-size:11px;margin-bottom:4px">眼轴趋势（mm）<span style="color:#6D28D9">— R</span> <span style="color:#d97706">— L</span></div>
+    <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;height:auto;background:#f8fafc;border-radius:8px">
+      <polyline points="${line('alR')}" fill="none" stroke="#6D28D9" stroke-width="2"/>
+      <polyline points="${line('alL')}" fill="none" stroke="#d97706" stroke-width="2"/>
+      ${pts.map((r, i) => `<text x="${x(i).toFixed(1)}" y="${H - 6}" font-size="9" text-anchor="middle" fill="#94a3b8">${esc(r.date.slice(5))}</text>`).join('')}
+    </svg></div>`;
+}
+function refractivePanel(ref, c) {
+  const recs = ref.records || [];
+  const alerts = (ref.alerts || []).map((a) => `<div class="result-box err" style="margin:0 0 8px">⚠ ${esc(a.text)}</div>`).join('');
+  const summary = [];
+  if (ref.alGrowth != null) summary.push(`眼轴年增长 <b>${ref.alGrowth}</b> mm/年`);
+  if (ref.alcr != null) summary.push(`轴率比 AL/CR <b>${ref.alcr}</b>`);
+  const rows = recs.slice().reverse().map((r) => `<tr>
+    <td class="muted">${esc(r.date)}</td>
+    <td class="num">${esc(r.alR || '—')}</td><td class="num">${esc(r.alL || '—')}</td>
+    <td class="num">${esc(r.crR || '—')}</td><td class="num">${esc(r.crL || '—')}</td>
+    <td class="muted">${esc(r.sphR || '—')}</td><td class="muted">${esc(r.sphL || '—')}</td>
+    <td class="muted">${esc(r.vaR || '—')}/${esc(r.vaL || '—')}</td>
+    <td class="muted">${esc(r.reserve || '—')}</td>
+    <td><button class="btn sm danger" data-delref="${esc(r.id)}">删</button></td></tr>`).join('');
+  return `<div class="panel" style="box-shadow:none;margin-bottom:14px">
+    <div class="panel-head"><div><div class="panel-title">屈光发育档案</div><div class="panel-sub">眼轴/曲率/屈光纵向追踪 · ${recs.length} 次检查</div></div><button class="btn sm primary" id="addRefractive">＋ 新增检查</button></div>
+    <div class="panel-body">
+      ${alerts}
+      ${summary.length ? `<div class="customer-summary" style="margin-bottom:10px">${summary.join(' · ')}</div>` : ''}
+      ${alChart(recs)}
+      ${recs.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>日期</th><th class="num">眼轴R</th><th class="num">眼轴L</th><th class="num">曲率R</th><th class="num">曲率L</th><th>屈光R</th><th>屈光L</th><th>裸眼视力</th><th>远视储备</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>` : '<div class="empty">还没有屈光检查记录。建议近视防控儿童每 3 个月测眼轴建档。</div>'}
+    </div>
+  </div>`;
+}
+function openRefractiveForm(c, existing, onSaved) {
+  const r = existing || {};
+  const body = `<div class="form-grid">
+    <div class="field"><label>检查日期</label><input class="input" id="rfDate" type="date" value="${esc(r.date || today())}"></div>
+    <div class="field"><label>眼轴 R（mm）</label><input class="input" id="rfAlR" type="number" step="0.01" value="${esc(r.alR || '')}" placeholder="如 23.5"></div>
+    <div class="field"><label>眼轴 L（mm）</label><input class="input" id="rfAlL" type="number" step="0.01" value="${esc(r.alL || '')}"></div>
+    <div class="field"><label>角膜曲率 R</label><input class="input" id="rfCrR" type="number" step="0.01" value="${esc(r.crR || '')}" placeholder="如 43.0"></div>
+    <div class="field"><label>角膜曲率 L</label><input class="input" id="rfCrL" type="number" step="0.01" value="${esc(r.crL || '')}"></div>
+    <div class="field"><label>屈光度 R</label><input class="input" id="rfSphR" value="${esc(r.sphR || '')}" placeholder="-2.00"></div>
+    <div class="field"><label>屈光度 L</label><input class="input" id="rfSphL" value="${esc(r.sphL || '')}"></div>
+    <div class="field"><label>裸眼视力 R</label><input class="input" id="rfVaR" value="${esc(r.vaR || '')}" placeholder="如 0.8"></div>
+    <div class="field"><label>裸眼视力 L</label><input class="input" id="rfVaL" value="${esc(r.vaL || '')}"></div>
+    <div class="field"><label>远视储备</label><input class="input" id="rfReserve" value="${esc(r.reserve || '')}" placeholder="如 +0.50"></div>
+    <div class="field span-2"><label>备注</label><input class="input" id="rfRemark" value="${esc(r.remark || '')}"></div>
+  </div>
+  <div class="hint">6~10 岁眼轴安全年增长 &lt; 0.20mm；AL/CR &gt; 2.90 建议散瞳验光（眼轴应用专家共识 2023）。</div>`;
+  const { root, close } = openModal({ title: '新增屈光检查', subtitle: c.name, body, footer: `<button class="btn" data-cancel>取消</button><button class="btn primary" id="rfSave">保存</button>`, size: 'wide' });
+  $('[data-cancel]', root).addEventListener('click', close);
+  $('#rfSave', root).addEventListener('click', async () => {
+    const payload = { customerId: c.id, date: $('#rfDate', root).value || today(), alR: $('#rfAlR', root).value, alL: $('#rfAlL', root).value, crR: $('#rfCrR', root).value, crL: $('#rfCrL', root).value, sphR: $('#rfSphR', root).value.trim(), sphL: $('#rfSphL', root).value.trim(), vaR: $('#rfVaR', root).value.trim(), vaL: $('#rfVaL', root).value.trim(), reserve: $('#rfReserve', root).value.trim(), remark: $('#rfRemark', root).value.trim() };
+    try { await api('/api/refractive', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); close(); toast('屈光检查已保存'); if (onSaved) onSaved(); } catch (e) { toast(e.message, 'error'); }
+  });
+}
+
 async function showCustomer(id) {
   try {
-    const c = await api('/api/customers/' + id);
+    const [c, ref] = await Promise.all([api('/api/customers/' + id), api('/api/refractive/' + id)]);
     const total = c.prescriptions.reduce((s, p) => s + Number(p.amount || 0), 0);
     const body = `
       <div class="detail-head">
         <div class="avatar">${esc((c.name || '?').slice(0, 1))}</div>
         <div>
-          <div class="detail-name">${esc(c.name)} <span class="tag ${STAGE_COLOR[c.lifecycleStage] || ''}" style="margin-left:6px">${esc(c.lifecycleStage || '')}</span></div>
+          <div class="detail-name">${esc(c.name)} <span class="tag ${STAGE_COLOR[c.lifecycleStage] || ''}" style="margin-left:6px">${esc(c.lifecycleStage || '')}</span> ${c.rfm ? `<span class="tag" style="margin-left:4px">RFM ${c.rfm.R}${c.rfm.F}${c.rfm.M} · ${esc(c.rfm.segment)}</span>` : ''}</div>
           <div class="detail-meta">${esc(c.gender || '—')} · ${esc(c.age || '—')} 岁 · ${esc(c.phone || '无电话')} · ${esc(c.school || '')}</div>
           <div class="detail-meta">来源：${esc(c.source || '—')} ${c.sourceDetail ? ' / ' + esc(c.sourceDetail) : ''}</div>
         </div>
@@ -847,6 +920,7 @@ async function showCustomer(id) {
         <div class="detail-stat"><b>${esc(c.prescriptions[0]?.date || '—')}</b><span>最近配镜</span></div>
       </div>
       ${c.remark ? `<div class="customer-summary">备注：${esc(c.remark)}</div>` : ''}
+      ${refractivePanel(ref, c)}
       <div class="panel" style="box-shadow:none">
         <div class="panel-head"><div class="panel-title">历史配镜记录</div><button class="btn sm primary" id="addForCustomer">＋ 给该客户开单</button></div>
         <div class="table-wrap">
@@ -860,12 +934,18 @@ async function showCustomer(id) {
         </div>
       </div>`;
     const { root, close } = openModal({
-      title: '客户详情', subtitle: '客户档案 + 历史处方', body,
+      title: '客户详情', subtitle: '客户档案 + 屈光档案 + 历史处方', body,
       footer: `<button class="btn" data-cancel>关闭</button><button class="btn" id="editC">编辑客户</button>`,
       size: 'wide',
     });
     $('[data-cancel]', root).addEventListener('click', close);
     $('#editC', root).addEventListener('click', () => { close(); openCustomerForm(c); });
+    const addRef = $('#addRefractive', root);
+    if (addRef) addRef.addEventListener('click', () => openRefractiveForm(c, null, () => { close(); showCustomer(id); }));
+    $$('[data-delref]', root).forEach((el) => el.addEventListener('click', async () => {
+      if (!confirm('删除这条屈光检查记录？')) return;
+      try { await api('/api/refractive/' + el.dataset.delref, { method: 'DELETE' }); close(); showCustomer(id); } catch (e) { toast(e.message, 'error'); }
+    }));
     $('#addForCustomer', root).addEventListener('click', () => {
       close();
       const fake = { customerId: c.id, customerName: c.name, phone: c.phone, source: c.source };
@@ -877,6 +957,126 @@ async function showCustomer(id) {
       }, 30);
     });
   } catch (e) { toast(e.message, 'error'); }
+}
+
+/* ---------------- P1-M6/M4: 客户运营（RFM 唤醒 + 家庭账户） ---------------- */
+const RFM_COLOR = { '重要价值': 'green', '重要发展': 'green', '重要保持': 'orange', '重要挽留': 'orange', '一般价值': '', '一般': 'gray', '流失预警': 'orange', '潜在': 'gray' };
+async function renderOps() {
+  const [rfm, families] = await Promise.all([api('/api/rfm-stats'), api('/api/families')]);
+  $('#topActions').innerHTML = `<button class="btn primary" id="addFamily">＋ 新建家庭账户</button>`;
+  const segTags = Object.entries(rfm.segDist).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="tag ${RFM_COLOR[k] || ''}">${esc(k)} ${v}</span>`).join('');
+  const winRows = rfm.winback.map((w) => `<tr>
+    <td><span class="link" data-customer="${esc(w.customerId)}">${esc(w.name)}</span></td>
+    <td class="muted">${esc(w.phone || '—')}</td>
+    <td><span class="tag ${RFM_COLOR[w.segment] || ''}">${esc(w.segment)}</span></td>
+    <td class="num money">${money(w.total)}</td>
+    <td class="num">${w.orderCount}</td>
+    <td class="muted">${esc(w.lastDate || '—')}</td>
+    <td class="num">${w.since != null ? w.since + ' 天' : '—'}</td>
+    <td><button class="btn sm" data-customer="${esc(w.customerId)}">查看</button></td></tr>`).join('');
+  const famRows = families.map((f) => `<tr>
+    <td><span class="link" data-family="${esc(f.id)}">${esc(f.name)}</span></td>
+    <td class="num">${f.memberCount}</td>
+    <td class="muted">${esc((f.createdAt || '').slice(0, 10))}</td>
+    <td class="muted">${esc(f.remark || '—')}</td>
+    <td><div class="actions"><button class="btn sm" data-family="${esc(f.id)}">查看</button><button class="btn sm danger" data-delfam="${esc(f.id)}">删除</button></div></td></tr>`).join('');
+  $('#view').innerHTML = `
+    <div class="panel" style="margin-bottom:16px">
+      <div class="panel-head"><div><div class="panel-title">RFM 分层 · 沉睡唤醒</div><div class="panel-sub">高价值流失客户优先唤醒（重要挽留/重要保持）</div></div><span class="tag orange">待唤醒 ${rfm.winbackTotal}</span></div>
+      <div class="panel-body">
+        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">${segTags}</div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>姓名</th><th>电话</th><th>分层</th><th class="num">累计消费</th><th class="num">次数</th><th>最近配镜</th><th class="num">距今</th><th>操作</th></tr></thead>
+          <tbody>${winRows || '<tr><td colspan="8"><div class="empty">暂无高价值流失客户</div></td></tr>'}</tbody>
+        </table></div>
+        <div class="hint">召回券请在「营销活动」给对应会员发放；非会员可先建档升级。RFM：R 最近消费 / F 频率 / M 金额。</div>
+      </div>
+    </div>
+    <div class="panel">
+      <div class="panel-head"><div><div class="panel-title">家庭账户</div><div class="panel-sub">以家庭为单位绑定成员 · 概览仅提示"该查没查"，不展示具体病情（分层授权）</div></div><span class="tag gray">${families.length} 个家庭</span></div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>家庭</th><th class="num">成员数</th><th>创建</th><th>备注</th><th>操作</th></tr></thead>
+        <tbody>${famRows || '<tr><td colspan="5"><div class="empty">还没有家庭账户，点右上角新建（如"张晓雨家庭"）</div></td></tr>'}</tbody>
+      </table></div>
+    </div>`;
+  $('#addFamily').addEventListener('click', () => openFamilyForm());
+  $$('[data-customer]').forEach((el) => el.addEventListener('click', () => showCustomer(el.dataset.customer)));
+  $$('[data-family]').forEach((el) => el.addEventListener('click', () => showFamily(el.dataset.family)));
+  $$('[data-delfam]').forEach((el) => el.addEventListener('click', async () => {
+    if (!confirm('删除该家庭账户？成员客户关系会解除（不删客户）。')) return;
+    try { await api('/api/families/' + el.dataset.delfam, { method: 'DELETE' }); toast('已删除'); renderOps(); } catch (e) { toast(e.message, 'error'); }
+  }));
+}
+function openFamilyForm() {
+  const { root, close } = openModal({
+    title: '新建家庭账户', subtitle: '以家庭为单位承接长期眼健康管理',
+    body: `<div class="form-grid" style="grid-template-columns:1fr">
+      <div class="field"><label>家庭名称 *</label><input class="input" id="famName" placeholder="如：张晓雨家庭 / 张氏家庭"></div>
+      <div class="field"><label>备注</label><input class="input" id="famRemark" placeholder="如：孩子近视防控，父母干眼"></div>
+    </div>`,
+    footer: `<button class="btn" data-cancel>取消</button><button class="btn primary" id="famSave">创建</button>`, size: 'narrow',
+  });
+  $('[data-cancel]', root).addEventListener('click', close);
+  $('#famSave', root).addEventListener('click', async () => {
+    const name = $('#famName', root).value.trim();
+    if (!name) return toast('家庭名称必填', 'error');
+    try { await api('/api/families', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, remark: $('#famRemark', root).value.trim() }) }); close(); toast('家庭已创建'); renderOps(); } catch (e) { toast(e.message, 'error'); }
+  });
+}
+async function showFamily(id) {
+  try {
+    const f = await api('/api/families/' + id);
+    const rows = f.members.map((m) => `<tr>
+      <td><span class="link" data-customer="${esc(m.id)}">${esc(m.name)}</span></td>
+      <td>${esc(m.familyRole || '—')}</td>
+      <td class="muted">${esc(m.relationNote || '—')}</td>
+      <td><span class="tag ${STAGE_COLOR[m.lifecycleStage] || ''}">${esc(m.lifecycleStage)}</span></td>
+      <td>${m.hasPending ? `<span class="tag orange">有 ${m.dueReview} 项该查</span>` : '<span class="tag green">无待查</span>'}</td>
+      <td><button class="btn sm danger" data-unbind="${esc(m.id)}">移除</button></td></tr>`).join('');
+    const { root, close } = openModal({
+      title: esc(f.name), subtitle: `家庭账户 · ${f.members.length} 位成员`,
+      body: `<div class="panel" style="box-shadow:none">
+        <div class="panel-head"><div class="panel-title">家庭成员</div><button class="btn sm primary" id="bindMember">＋ 绑定成员</button></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>姓名</th><th>关系</th><th>备注</th><th>阶段</th><th>复查提示</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6"><div class="empty">还没有成员，点右上角绑定</div></td></tr>'}</tbody>
+        </table></div>
+        <div class="hint">概览只显示"该查没查"，不展示具体诊断与数值；查看明细需进入对应客户档案（分层授权）。</div>
+      </div>`,
+      footer: `<button class="btn" data-cancel>关闭</button>`, size: 'wide',
+    });
+    $('[data-cancel]', root).addEventListener('click', close);
+    $('#bindMember', root).addEventListener('click', () => { close(); openBindMember(id); });
+    $$('[data-customer]', root).forEach((el) => el.addEventListener('click', () => { close(); showCustomer(el.dataset.customer); }));
+    $$('[data-unbind]', root).forEach((el) => el.addEventListener('click', async () => {
+      try { await api(`/api/families/${id}/members/${el.dataset.unbind}`, { method: 'DELETE' }); close(); showFamily(id); } catch (e) { toast(e.message, 'error'); }
+    }));
+  } catch (e) { toast(e.message, 'error'); }
+}
+function openBindMember(familyId) {
+  const { root, close } = openModal({
+    title: '绑定家庭成员', subtitle: '选择已有客户加入家庭',
+    body: `<div class="form-grid" style="grid-template-columns:1fr">
+      <div class="field"><label>搜索客户</label><input class="input" id="bmSearch" placeholder="姓名 / 电话"></div>
+      <div class="field"><label>选择客户</label><select class="select" id="bmCustomer" size="6"></select></div>
+      <div class="field"><label>家庭关系</label><select class="select" id="bmRole"><option value="">请选择</option><option>户主</option><option>配偶</option><option>子女</option><option>父母</option><option>其他</option></select></div>
+      <div class="field"><label>关系备注</label><input class="input" id="bmNote" placeholder="如：孩子近视防控"></div>
+    </div>`,
+    footer: `<button class="btn" data-cancel>取消</button><button class="btn primary" id="bmSave">绑定</button>`, size: 'narrow',
+  });
+  const loadCustomers = async (q) => {
+    const r = await api('/api/customers?pageSize=30' + (q ? '&search=' + encodeURIComponent(q) : ''));
+    const list = r.items || r;
+    $('#bmCustomer', root).innerHTML = list.map((c) => `<option value="${esc(c.id)}">${esc(c.name)} · ${esc(c.phone || '无电话')}</option>`).join('');
+  };
+  loadCustomers('');
+  let t; $('#bmSearch', root).addEventListener('input', (e) => { clearTimeout(t); t = setTimeout(() => loadCustomers(e.target.value.trim()), 250); });
+  $('[data-cancel]', root).addEventListener('click', close);
+  $('#bmSave', root).addEventListener('click', async () => {
+    const customerId = $('#bmCustomer', root).value;
+    if (!customerId) return toast('请选择客户', 'error');
+    try { await api(`/api/families/${familyId}/members`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, familyRole: $('#bmRole', root).value, relationNote: $('#bmNote', root).value.trim() }) }); close(); toast('已绑定'); showFamily(familyId); } catch (e) { toast(e.message, 'error'); }
+  });
 }
 
 /* ---------------- 会员管理 ---------------- */

@@ -307,6 +307,8 @@ function stats() {
 /* ---------------- 鉴权 ---------------- */
 function sha256(s) { return crypto.createHash('sha256').update(String(s)).digest('hex'); }
 if (!Array.isArray(db.followUps)) db.followUps = [];
+if (!Array.isArray(db.refractiveRecords)) db.refractiveRecords = [];
+if (!Array.isArray(db.families)) db.families = [];
 if (!db.settings.auth) { db.settings.auth = { passwordHash: sha256('admin123'), mustChange: true }; saveDB(); }
 
 const sessions = new Map();
@@ -329,7 +331,7 @@ function lanUrls() {
 }
 
 /* 健康检查：不返回任何业务数据，供 Docker / 负载均衡探活 */
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.3.0', time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.4.0', time: new Date().toISOString() }));
 
 app.post('/api/login', (req, res) => {
   const { password } = req.body || {};
@@ -578,6 +580,142 @@ app.get('/api/lifecycle-stats', (req, res) => {
   const result = { total, stageDist: dist, sleepingRatio: total ? sleeping / total : 0, repurchaseRate: withOrders ? repeat / withOrders : 0, reviewDue: rc.due, reviewOnTime: rc.onTime, reviewRate: rc.rate };
   _lcCache = result; _lcKey = ck;
   res.json(result);
+});
+
+/* ---------------- P1-M5: 屈光发育档案 ---------------- */
+function refractiveOf(customerId) {
+  return db.refractiveRecords.filter((r) => r.customerId === customerId).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+function refractiveAnalysis(customerId) {
+  const c = customerById(customerId);
+  const recs = refractiveOf(customerId);
+  const alerts = [];
+  const age = Number(c && c.age) || 0;
+  const withAL = recs.filter((r) => Number(r.alR) > 0 || Number(r.alL) > 0);
+  let alGrowth = null;
+  if (withAL.length >= 2) {
+    const first = withAL[0], last = withAL[withAL.length - 1];
+    const days = diffDays(first.date, last.date);
+    if (days > 0) {
+      const alFirst = Number(first.alR) || Number(first.alL) || 0;
+      const alLast = Number(last.alR) || Number(last.alL) || 0;
+      alGrowth = Math.round(((alLast - alFirst) / (days / 365)) * 1000) / 1000;
+      if (age >= 6 && age <= 10 && alGrowth > 0.20) alerts.push({ level: 'warn', text: `眼轴年增长 ${alGrowth}mm，超过 6~10 岁安全值 0.20mm/年，建议加强防控并缩短复查间隔` });
+    }
+  }
+  const latest = recs[recs.length - 1] || null;
+  let alcr = null;
+  if (latest && Number(latest.alR) > 0 && Number(latest.crR) > 0) {
+    alcr = Math.round((Number(latest.alR) / Number(latest.crR)) * 100) / 100;
+    if (alcr > 2.90) alerts.push({ level: 'warn', text: `轴率比 AL/CR=${alcr} > 2.90，建议睫状肌麻痹（散瞳）验光明确屈光度` });
+  }
+  return { records: recs, latest, alGrowth, alcr, alerts, count: recs.length };
+}
+app.get('/api/refractive/:customerId', (req, res) => res.json(refractiveAnalysis(req.params.customerId)));
+app.post('/api/refractive', (req, res) => {
+  const b = req.body || {};
+  if (!b.customerId) return res.status(400).json({ error: '缺少客户' });
+  if (!customerById(b.customerId)) return res.status(404).json({ error: '客户不存在' });
+  const r = { id: uid('r_'), customerId: b.customerId, date: b.date || todayISO(), alR: b.alR || '', alL: b.alL || '', crR: b.crR || '', crL: b.crL || '', sphR: b.sphR || '', sphL: b.sphL || '', vaR: b.vaR || '', vaL: b.vaL || '', reserve: b.reserve || '', remark: b.remark || '', createdAt: new Date().toISOString() };
+  db.refractiveRecords.push(r); saveDB(); res.json(r);
+});
+app.put('/api/refractive/:id', (req, res) => {
+  const r = db.refractiveRecords.find((x) => x.id === req.params.id);
+  if (!r) return res.status(404).json({ error: '记录不存在' });
+  const b = req.body || {};
+  ['date', 'alR', 'alL', 'crR', 'crL', 'sphR', 'sphL', 'vaR', 'vaL', 'reserve', 'remark'].forEach((k) => { if (b[k] !== undefined) r[k] = b[k]; });
+  saveDB(); res.json(r);
+});
+app.delete('/api/refractive/:id', (req, res) => {
+  const i = db.refractiveRecords.findIndex((x) => x.id === req.params.id);
+  if (i < 0) return res.status(404).json({ error: '记录不存在' });
+  db.refractiveRecords.splice(i, 1); saveDB(); res.json({ ok: true });
+});
+
+/* ---------------- P1-M6: RFM 分层 + 沉睡唤醒 ---------------- */
+function rfmScores(ps, today) {
+  let lastDate = '', total = 0;
+  for (const p of ps) { total += Number(p.amount || 0); if ((p.date || '') > lastDate) lastDate = p.date || ''; }
+  const F = ps.length;
+  const since = lastDate ? diffDays(lastDate, today) : null;
+  const R = since == null ? 1 : since <= 90 ? 5 : since <= 180 ? 4 : since <= 365 ? 3 : since <= 730 ? 2 : 1;
+  const Fs = F >= 4 ? 5 : F === 3 ? 4 : F === 2 ? 3 : F === 1 ? 2 : 1;
+  const M = total >= 5000 ? 5 : total >= 3000 ? 4 : total >= 1500 ? 3 : total >= 500 ? 2 : 1;
+  return { R, F: Fs, M, since, total, orderCount: F, lastDate };
+}
+function rfmSegment(s) {
+  if (!s.orderCount) return '潜在';
+  const highR = s.R >= 4, highF = s.F >= 3, highM = s.M >= 3;
+  if (highR && highF && highM) return '重要价值';
+  if (highR && !highF && highM) return '重要发展';
+  if (!highR && highF && highM) return '重要保持';
+  if (!highR && !highF && highM) return '重要挽留';
+  if (highR && highF && !highM) return '一般价值';
+  if (s.R <= 2 && s.F <= 2 && !highM) return '流失预警';
+  return '一般';
+}
+app.get('/api/rfm-stats', (req, res) => {
+  const ck = _cacheEpoch + '|' + todayISO();
+  if (_rfmCache && _rfmKey === ck) return res.json(_rfmCache);
+  const byCust = groupPrescriptionsByCustomer();
+  const today = todayISO();
+  const segDist = {}; const winback = [];
+  for (const c of db.customers) {
+    const s = rfmScores(byCust.get(c.id) || [], today);
+    const seg = rfmSegment(s);
+    segDist[seg] = (segDist[seg] || 0) + 1;
+    if (seg === '重要挽留' || seg === '重要保持') winback.push({ customerId: c.id, name: c.name, phone: c.phone, segment: seg, total: s.total, orderCount: s.orderCount, since: s.since, lastDate: s.lastDate });
+  }
+  winback.sort((a, b) => b.total - a.total);
+  const result = { segDist, winback: winback.slice(0, 200), winbackTotal: winback.length };
+  _rfmCache = result; _rfmKey = ck;
+  res.json(result);
+});
+let _rfmCache = null, _rfmKey = '';
+
+/* ---------------- P1-M4: 家庭账户（基础层：分组/绑定/隐私化概览；共享积分池待财务口径确认） ---------------- */
+app.get('/api/families', (req, res) => {
+  const list = db.families.map((f) => ({ ...f, memberCount: db.customers.filter((c) => c.familyId === f.id).length }));
+  res.json(list.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')));
+});
+app.post('/api/families', (req, res) => {
+  const b = req.body || {};
+  const f = { id: uid('fam_'), name: b.name || '家庭', remark: b.remark || '', createdAt: new Date().toISOString() };
+  db.families.push(f); saveDB(); res.json(f);
+});
+app.get('/api/families/:id', (req, res) => {
+  const f = db.families.find((x) => x.id === req.params.id);
+  if (!f) return res.status(404).json({ error: '家庭不存在' });
+  const today = todayISO(); const th = lifecycleThresholds();
+  const byCust = groupPrescriptionsByCustomer();
+  const allSug = followupSuggestions();
+  // 隐私化概览：只提示"该查没查"，不展示具体诊断/数值（院方分层授权底线）
+  const members = db.customers.filter((c) => c.familyId === f.id).map((c) => {
+    const stage = computeStage(byCust.get(c.id) || [], today, th);
+    const dueReview = allSug.filter((s) => s.customerId === c.id && (s.overdue || s.daysDiff <= 0)).length;
+    return { id: c.id, name: c.name, familyRole: c.familyRole || '', relationNote: c.relationNote || '', age: c.age, lifecycleStage: stage, dueReview, hasPending: dueReview > 0 };
+  });
+  res.json({ ...f, members });
+});
+app.post('/api/families/:id/members', (req, res) => {
+  const f = db.families.find((x) => x.id === req.params.id);
+  if (!f) return res.status(404).json({ error: '家庭不存在' });
+  const b = req.body || {};
+  const c = customerById(b.customerId);
+  if (!c) return res.status(404).json({ error: '客户不存在' });
+  c.familyId = f.id; c.familyRole = b.familyRole || ''; c.relationNote = b.relationNote || '';
+  saveDB(); res.json({ ok: true });
+});
+app.delete('/api/families/:id/members/:customerId', (req, res) => {
+  const c = customerById(req.params.customerId);
+  if (c && c.familyId === req.params.id) { c.familyId = ''; c.familyRole = ''; c.relationNote = ''; saveDB(); }
+  res.json({ ok: true });
+});
+app.delete('/api/families/:id', (req, res) => {
+  const i = db.families.findIndex((x) => x.id === req.params.id);
+  if (i < 0) return res.status(404).json({ error: '家庭不存在' });
+  db.customers.forEach((c) => { if (c.familyId === req.params.id) { c.familyId = ''; c.familyRole = ''; c.relationNote = ''; } });
+  db.families.splice(i, 1); saveDB(); res.json({ ok: true });
 });
 
 /* ---------------- 会员管理 ---------------- */
@@ -901,6 +1039,7 @@ app.get('/api/stats', (req, res) => res.json(stats()));
 app.get('/api/customers', (req, res) => {
   const q = String(req.query.search || '').trim().toLowerCase();
   const stageFilter = req.query.stage || '';
+  const rfmFilter = req.query.rfm || '';
   const byCust = groupPrescriptionsByCustomer();
   const today = todayISO(); const th = lifecycleThresholds();
   let list = db.customers
@@ -912,9 +1051,10 @@ app.get('/api/customers', (req, res) => {
       return { ...c, orderCount: ps.length, totalAmount, lastDate, _ps: ps };
     });
   if (stageFilter) list = list.map((c) => ({ ...c, lifecycleStage: computeStage(c._ps, today, th) })).filter((c) => c.lifecycleStage === stageFilter);
+  if (rfmFilter) list = list.map((c) => ({ ...c, _rfmSeg: rfmSegment(rfmScores(c._ps, today)) })).filter((c) => c._rfmSeg === rfmFilter);
   list.sort((a, b) => (b.lastDate || '').localeCompare(a.lastDate || ''));
   const pageSize = Math.min(Math.max(parseInt(req.query.pageSize, 10) || 0, 0), 500);
-  const withStage = ({ _ps, ...c }) => ({ ...c, lifecycleStage: c.lifecycleStage || computeStage(_ps, today, th) });
+  const withStage = ({ _ps, _rfmSeg, ...c }) => { const s = rfmScores(_ps, today); return { ...c, lifecycleStage: c.lifecycleStage || computeStage(_ps, today, th), rfm: { R: s.R, F: s.F, M: s.M, segment: _rfmSeg || rfmSegment(s) } }; };
   if (!pageSize) return res.json(list.map(withStage));
   const page = Math.max(parseInt(req.query.page, 10) || 1, 1);
   res.json({ items: list.slice((page - 1) * pageSize, page * pageSize).map(withStage), total: list.length, page, pageSize });
@@ -924,7 +1064,8 @@ app.get('/api/customers/:id', (req, res) => {
   const c = customerById(req.params.id);
   if (!c) return res.status(404).json({ error: '客户不存在' });
   const ps = db.prescriptions.filter((p) => p.customerId === c.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
-  res.json({ ...c, lifecycleStage: computeStage(ps, todayISO(), lifecycleThresholds()), prescriptions: ps });
+  const s = rfmScores(ps, todayISO());
+  res.json({ ...c, lifecycleStage: computeStage(ps, todayISO(), lifecycleThresholds()), rfm: { R: s.R, F: s.F, M: s.M, segment: rfmSegment(s) }, prescriptions: ps });
 });
 
 app.post('/api/customers', (req, res) => {
