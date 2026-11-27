@@ -1,0 +1,31 @@
+# 依赖
+node_modules/
+
+# 运行时数据（唯一生产数据文件，绝不入库）
+app/data/db.json
+app/data/db.json.tmp
+app/data/db.json.broken-*
+app/data/backups/
+
+# 构建 / 审计产物
+app/audit.json
+app/tree*.json
+
+# 备选方案遗留（与现系统无关，见交接文档 §2）
+nocobase/
+storage/
+
+# 本地改动前的安全备份（非交付物）
+app/public/.backup-pre-wanxiang/
+app/public/.skshell-backup/
+
+# 环境与本地密钥
+.env
+.env.*
+!.env.example
+*.local
+
+# 系统文件
+Thumbs.db
+Desktop.ini
+.DS_Store

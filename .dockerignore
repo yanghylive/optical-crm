@@ -1,0 +1,13 @@
+# Docker 构建上下文忽略清单（上下文 = 本目录）
+node_modules
+**/node_modules
+app/data
+deploy/data
+nocobase
+templates
+.git
+*.log
+*.tar.gz
+*.zip
+app/public/.backup-pre-wanxiang
+app/public/.skshell-backup

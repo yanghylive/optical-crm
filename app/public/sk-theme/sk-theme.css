@@ -1,0 +1,168 @@
+/* ============================================================
+   JIUZHANG SuperShell 视觉规范 —— sk-theme 包（二开工作台生成）
+   来源：apps/shell/renderer/index.html 权威 token（深宝石紫方案 A，2026-09-20）
+   主题切换：<html data-theme="light|dark|brand">（挂 html 或 body 均可）
+   ============================================================ */
+:root {
+  --kaypal-primary: #6D28D9;
+  --kaypal-primary-ink: #6D28D9;
+  --kaypal-primary-hover: #5B21B6;
+  --kaypal-bg: #ffffff;
+  --kaypal-card: #ffffff;
+  --kaypal-border: rgba(0,0,0,.09);
+  --kaypal-text: #1d1d1f;
+  --kaypal-text-sub: #6e6e73;
+  --kaypal-sidebar: #F5F3F7;
+  --kaypal-tabstrip: #ffffff;
+  --kaypal-accent-soft: rgba(0,0,0,.045);
+  --kaypal-accent-tint: #EBE7F4;
+  --kaypal-active: rgba(0,0,0,.08);
+  --kaypal-border-strong: rgba(0,0,0,.16);
+  --kaypal-on-selected: #1d1d1f;
+  --kaypal-ok-c: #e5f4ea;   --kaypal-ok-dot: #34c759;   --kaypal-ok-text: #135c27;
+  --kaypal-warn-c: #fff3d6; --kaypal-warn-dot: #ffcc00; --kaypal-warn-text: #8a5600;
+  --kaypal-err-c: #ffe5e2;  --kaypal-err-dot: #ff453a;  --kaypal-err-text: #d70015;
+  --kaypal-r-ctl: 6px; --kaypal-r-card: 10px; --kaypal-r-pop: 12px; --kaypal-r-full: 999px;
+  --kaypal-shadow-pop: 0 0 0 1px rgba(0,0,0,.05), 0 10px 40px rgba(0,0,0,.14), 0 2px 8px rgba(0,0,0,.06);
+  --kaypal-focus: #6D28D9;
+  --kaypal-text-faint: #6e6e73;
+  --kaypal-ok: #1a7f37;
+  --kaypal-err: #d70015;
+  --kaypal-warn: #9a6700;
+  --kaypal-v3-font-nav: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC",
+    "HarmonyOS Sans SC", "MiSans", "Segoe UI", "Microsoft YaHei", ui-sans-serif, sans-serif;
+  --kaypal-v3-font-mono: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas, "Liberation Mono", monospace;
+  --mv-fast-fx: 150ms cubic-bezier(.2,0,0,1);
+  --mv-default-fx: 200ms cubic-bezier(.2,0,0,1);
+  --mv-fast-spatial: 200ms cubic-bezier(.05,.7,.1,1);
+  --mv-default-spatial: 250ms cubic-bezier(.05,.7,.1,1);
+  --mv-enter: cubic-bezier(.05,.7,.1,1);
+  --mv-exit: cubic-bezier(.4,0,1,1);
+  --dur-fx: 150ms;
+  --dur-fx2: 200ms;
+  --dur-enter: 320ms;
+  --dur-spatial: 250ms;
+}
+:root[data-theme="dark"] {
+  --kaypal-bg: #1e1e1e; --kaypal-card: #232325; --kaypal-border: rgba(255,255,255,.09);
+  --kaypal-text: #f5f5f7; --kaypal-text-sub: #a1a1a6; --kaypal-text-faint: #6e6e73;
+  --kaypal-sidebar: #171717; --kaypal-accent-soft: rgba(255,255,255,.06); --kaypal-accent-tint: #39393d;
+  --kaypal-tabstrip: #232325; --kaypal-ok: #30d158; --kaypal-err: #ff453a; --kaypal-warn: #ffd60a;
+  --kaypal-active: rgba(255,255,255,.1);
+  --kaypal-border-strong: rgba(255,255,255,.16);
+  --kaypal-on-selected: #f5f5f7;
+  --kaypal-ok-c: rgba(48,209,88,.14);   --kaypal-ok-dot: #30d158;   --kaypal-ok-text: #30d158;
+  --kaypal-warn-c: rgba(255,214,10,.14); --kaypal-warn-dot: #ffd60a; --kaypal-warn-text: #ffd60a;
+  --kaypal-err-c: rgba(255,69,58,.14);   --kaypal-err-dot: #ff453a;  --kaypal-err-text: #ff453a;
+  --kaypal-focus: #7C3AED;
+  --kaypal-primary: #7C3AED; --kaypal-primary-hover: #8B5CF6;
+  --kaypal-primary-ink: #A78BFA;
+  --kaypal-shadow-pop: 0 0 0 1px rgba(255,255,255,.07), 0 12px 44px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.4);
+}
+:root[data-theme="brand"] {
+  --kaypal-bg: #100A1C; --kaypal-card: #171123; --kaypal-border: rgba(220,208,255,.09);
+  --kaypal-text: #ECE7F6; --kaypal-text-sub: #A89FC4; --kaypal-text-faint: #6F668C;
+  --kaypal-sidebar: #0C0815; --kaypal-accent-soft: rgba(200,170,255,.06); --kaypal-accent-tint: #261C3E;
+  --kaypal-tabstrip: #171123; --kaypal-ok: #4ade80; --kaypal-err: #f87171; --kaypal-warn: #fbbf24;
+  --kaypal-active: rgba(200,170,255,.1);
+  --kaypal-border-strong: rgba(220,208,255,.16);
+  --kaypal-on-selected: #e8e2f5;
+  --kaypal-ok-c: rgba(74,222,128,.13);   --kaypal-ok-dot: #4ade80;   --kaypal-ok-text: #6ee7a0;
+  --kaypal-warn-c: rgba(251,191,36,.13); --kaypal-warn-dot: #fbbf24; --kaypal-warn-text: #fcd34d;
+  --kaypal-err-c: rgba(248,113,113,.13); --kaypal-err-dot: #f87171;  --kaypal-err-text: #fca5a5;
+  --kaypal-focus: #A78BFA;
+  --kaypal-primary: #7C3AED; --kaypal-primary-hover: #8B5CF6;
+  --kaypal-primary-ink: #C4B5FD;
+  --kaypal-shadow-pop: 0 0 0 1px rgba(220,208,255,.07), 0 12px 44px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.4);
+}
+* { box-sizing: border-box; }
+:focus-visible { outline: 2px solid var(--kaypal-focus); outline-offset: 2px; border-radius: 4px; }
+:root { font-family: var(--kaypal-v3-font-nav); -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+
+/* ---- sv 组件语言（精简版：按钮 / 卡片 / pill / 搜索栏 / chip / 导航 / 进度） ---- */
+.sv-btn, .sv-act-btn {
+  border: none; border-radius: var(--kaypal-r-ctl); font-family: inherit;
+  background: var(--kaypal-accent-tint); color: var(--kaypal-on-selected);
+  font-weight: 500; cursor: pointer;
+  transition: background-color var(--mv-default-fx), color var(--mv-fast-fx), transform var(--mv-fast-fx);
+}
+.sv-btn:hover, .sv-act-btn:hover { background: var(--kaypal-active); }
+.sv-btn:active, .sv-act-btn:active { transform: scale(.97); }
+.sv-btn-primary { background: var(--kaypal-primary); color: #fff; }
+.sv-btn-primary:hover { background: var(--kaypal-primary-hover); }
+.sv-btn { padding: 0 22px; height: 40px; font-size: 14px; }
+.sv-act-btn { padding: 5px 13px; font-size: 13px; }
+.sv-btn-quiet { background: transparent; color: var(--kaypal-primary-ink); }
+.sv-btn-quiet:hover { background: var(--kaypal-accent-soft); color: var(--kaypal-primary-ink); }
+
+.sv-card {
+  background: var(--kaypal-card); border: 1px solid var(--kaypal-border);
+  border-radius: var(--kaypal-r-card); padding: 16px 17px;
+}
+.sv-card + .sv-card { margin-top: 12px; }
+.sv-card:hover { background: var(--kaypal-accent-soft); }
+.sv-card-title { font-size: 15px; font-weight: 550; letter-spacing: -.1px; margin: 0 0 6px; }
+.sv-card-sub { font-size: 12px; color: var(--kaypal-text-sub); margin: 0 0 10px; }
+
+.sv-pill {
+  display: inline-flex; align-items: center; border-radius: var(--kaypal-r-full);
+  padding: 3px 10px; font-size: 12px; font-weight: 500;
+  background: var(--kaypal-accent-tint); color: var(--kaypal-on-selected);
+}
+.sv-pill.ok { background: var(--kaypal-ok-c); color: var(--kaypal-ok-text); }
+.sv-pill.warn { background: var(--kaypal-warn-c); color: var(--kaypal-warn-text); }
+.sv-pill.err { background: var(--kaypal-err-c); color: var(--kaypal-err-text); }
+
+.sv-search-bar {
+  display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 16px;
+  border-radius: var(--kaypal-r-ctl); border: 1px solid var(--kaypal-border-strong);
+  color: var(--kaypal-text-sub); background: var(--kaypal-card); max-width: 720px;
+}
+.sv-search-bar:focus-within { border-color: var(--kaypal-primary); }
+.sv-search-bar input {
+  flex: 1; border: none; background: transparent; color: var(--kaypal-text);
+  font-size: 15px; font-family: inherit;
+}
+.sv-chip {
+  display: inline-flex; align-items: center; gap: 5px; height: 30px; padding: 0 13px;
+  border-radius: var(--kaypal-r-full); border: 1px solid var(--kaypal-border-strong);
+  background: transparent; color: var(--kaypal-text-sub); font-size: 13px; font-weight: 500;
+  font-family: inherit; cursor: pointer;
+}
+.sv-chip:hover { background: var(--kaypal-accent-soft); color: var(--kaypal-text); }
+.sv-chip.sel { background: var(--kaypal-text); border-color: var(--kaypal-text); color: var(--kaypal-bg); }
+
+.sv-nav-item {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+  padding: 0 14px; height: 56px; border: none; background: transparent;
+  color: var(--kaypal-text-sub); border-radius: var(--kaypal-r-ctl);
+  font-size: 14px; font-weight: 500; cursor: pointer; font-family: inherit;
+}
+.sv-nav-item:hover { background: var(--kaypal-accent-soft); color: var(--kaypal-text); }
+.sv-nav-item.active { background: var(--kaypal-accent-tint); color: var(--kaypal-on-selected); }
+
+.sv-tab {
+  display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+  border-radius: var(--kaypal-r-ctl); background: transparent; border: none;
+  font-size: 14px; font-weight: 500; cursor: pointer; color: var(--kaypal-text-sub);
+  white-space: nowrap; font-family: inherit;
+}
+.sv-tab:hover { background: var(--kaypal-accent-soft); color: var(--kaypal-text); }
+.sv-tab.active { background: var(--kaypal-accent-tint); color: var(--kaypal-on-selected); }
+
+.sv-pbar { position: relative; height: 4px; border-radius: var(--kaypal-r-full);
+           background: var(--kaypal-active); overflow: hidden; }
+.sv-pbar i { display: block; height: 100%; background: var(--kaypal-primary); border-radius: var(--kaypal-r-full); }
+.sv-pbar.done i { background: var(--kaypal-ok-dot); }
+.sv-pbar.warn i { background: var(--kaypal-warn-dot); }
+
+.sv-kv { display: grid; grid-template-columns: 120px 1fr; gap: 6px 12px; max-width: 620px;
+         font-size: 13px; }
+.sv-kv .k { color: var(--kaypal-text-sub); }
+
+.sv-empty { color: var(--kaypal-text-sub); font-size: 13px; padding: 20px 0; }
+.sv-empty .why { display: block; font-size: 12px; margin-top: 6px; color: var(--kaypal-text-faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}

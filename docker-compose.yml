@@ -1,0 +1,41 @@
+networks:
+  nocobase:
+    driver: bridge
+
+services:
+  app:
+    image: docker.m.daocloud.io/nocobase/nocobase:1.7.14-full
+    restart: always
+    networks:
+      - nocobase
+    depends_on:
+      - postgres
+    environment:
+      - APP_KEY=OpticalCRM_2026_ChangeMe_9f3a7c1e
+      - DB_DIALECT=postgres
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_DATABASE=nocobase
+      - DB_USER=nocobase
+      - DB_PASSWORD=nocobase
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./storage:/app/nocobase/storage
+    ports:
+      - '13000:80'
+
+  postgres:
+    image: docker.m.daocloud.io/library/postgres:16
+    restart: always
+    command: postgres -c wal_level=logical
+    environment:
+      POSTGRES_USER: nocobase
+      POSTGRES_DB: nocobase
+      POSTGRES_PASSWORD: nocobase
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - nocobase
+
+volumes:
+  pgdata:

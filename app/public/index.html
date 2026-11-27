@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>明视眼镜 · 配镜客户管理</title>
+  <link rel="stylesheet" href="/styles.css" />
+  <link rel="stylesheet" href="/sk-theme/sk-theme.css" />
+  <script src="/sk-theme/sk-theme.js"></script>
+  </head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">明</div>
+        <div>
+          <div class="brand-name" id="shopName">明视眼镜</div>
+          <div class="brand-sub">配镜客户管理</div>
+        </div>
+      </div>
+      <nav class="nav">
+        <a href="#/dashboard" data-nav="dashboard"><span class="nav-ico">▦</span>工作台</a>
+        <a href="#/prescriptions" data-nav="prescriptions"><span class="nav-ico">◉</span>配镜记录</a>
+        <a href="#/customers" data-nav="customers"><span class="nav-ico">☺</span>客户管理</a>
+        <a href="#/members" data-nav="members"><span class="nav-ico">★</span>会员管理</a>
+        <a href="#/marketing" data-nav="marketing"><span class="nav-ico">%</span>营销活动</a>
+        <a href="#/followups" data-nav="followups"><span class="nav-ico">✆</span>回访提醒</a>
+        <a href="#/staff" data-nav="staff"><span class="nav-ico">☷</span>员工管理</a>
+        <a href="#/import" data-nav="import"><span class="nav-ico">⇅</span>导入 / 导出</a>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="tip-card">
+          <div class="tip-title">今日提示</div>
+          <div class="tip-text">配镜记录已按“客户 + 验光数据”结构化，历史处方可随时回查。</div>
+        </div>
+        <div class="version">轻量版 v1.0 · 数据自动保存</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <h1 id="pageTitle">工作台</h1>
+          <div class="subtitle" id="pageSubtitle">今天的生意，一眼看清</div>
+        </div>
+        <div class="top-actions">
+          <span id="topActions" style="display:contents"></span>
+          <button class="btn sm" id="btnSettings">门店设置</button>
+          <button class="btn sm" id="btnChangePwd">改密码</button>
+          <button class="btn sm" id="btnLogout">退出</button>
+        </div>
+      </header>
+      <div id="view" class="view"></div>
+    </main>
+  </div>
+
+  <div id="modalRoot"></div>
+  <div id="toast" class="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

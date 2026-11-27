@@ -1,0 +1,6 @@
+{
+  "files": {
+    "original-website.json": "{\n  \"schemaVersion\": \"wanxiang.original-website.v1\",\n  \"appId\": \"cn.kaypal.original.optical\",\n  \"version\": \"0.1.0\",\n  \"launchMode\": \"original-website\",\n  \"entrypoints\": [\n    {\n      \"label\": \"optical.opensource.kaypal.cn\",\n      \"url\": \"https://optical.opensource.kaypal.cn/\"\n    }\n  ],\n  \"selection\": \"primary\"\n}\n",
+    "index.html": "<!doctype html><html lang=\"zh-CN\"><meta charset=\"utf-8\"><meta http-equiv=\"Content-Security-Policy\" content=\"default-src 'none'\"><title>眼镜店 CRM · 行业版</title><p>请从万象 AI 市集打开眼镜店 CRM · 行业版。</p></html>\n"
+  }
+}

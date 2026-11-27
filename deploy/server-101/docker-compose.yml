@@ -1,0 +1,31 @@
+# 配镜 CRM · 应用服 101.37.128.23
+#
+# 与本机既有应用一致的约定：容器只绑 127.0.0.1，公网由宿主机 nginx 反代。
+# 本机 nginx 是宿主级 nginx 1.20.1（不是容器），所以直接用 127.0.0.1:3120 即可，
+# 不需要加入任何 docker 网络。
+#
+# 入口：https://optical.opensource.kaypal.cn
+#   DNS  *.opensource.kaypal.cn 已泛解析到本机
+#   证书 /etc/nginx/ssl/opensource-wildcard 已覆盖该域名（有效期至 2027-01-10）
+
+services:
+  optical:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: optical-crm:1.0.0
+    container_name: optical-crm
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      SEED_DEMO: "0"
+    ports:
+      - "127.0.0.1:3120:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

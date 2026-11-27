@@ -1,0 +1,39 @@
+# 配镜 CRM · 独立编排（与万象平台同机、互不干扰）
+#
+# 用法：
+#   cd deploy
+#   cp .env.example .env   # 按需改 OPTICAL_NETWORK / HOST_PORT
+#   docker compose up -d --build
+#
+# 设计要点：
+#   1. 独立 compose 项目，不修改万象平台的任何服务定义
+#   2. 只把端口绑到 127.0.0.1，公网一律走平台已有的 nginx 443/8443
+#   3. 加入平台已有的 docker 网络，让 nginx 能用容器名 optical 反代
+#   4. 数据落在 ./data，卷挂载持久化；镜像重建不丢数据
+
+services:
+  optical:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: optical-crm:1.0.0
+    container_name: optical-crm
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      # 生产默认空库。只有显式设成 1 才会灌演示数据
+      SEED_DEMO: "0"
+    ports:
+      # 只绑本机回环，供宿主机调试 / nginx 反代；不对公网暴露
+      - "127.0.0.1:${HOST_PORT:-3100}:3000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    networks:
+      - wanxiang
+
+networks:
+  wanxiang:
+    external: true
+    # 实际网络名由 install.sh 自动探测后写入 .env
+    name: ${OPTICAL_NETWORK:?请先运行 install.sh 探测平台网络名，或在 .env 里设 OPTICAL_NETWORK}

@@ -1,0 +1,237 @@
+{
+  "settings": {
+    "shopName": "明视眼镜",
+    "sources": [
+      "门店自然客",
+      "老客户转介绍",
+      "抖音",
+      "美团/大众点评",
+      "小红书",
+      "学校筛查",
+      "医院转诊",
+      "其他"
+    ],
+    "categories": [
+      "框架眼镜",
+      "隐形眼镜",
+      "太阳镜",
+      "功能镜片",
+      "其他"
+    ],
+    "staffRoles": [
+      "医生",
+      "销售",
+      "制作"
+    ],
+    "auth": {
+      "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "mustChange": true
+    },
+    "memberLevels": [
+      {
+        "name": "普通会员",
+        "threshold": 0,
+        "discount": 1,
+        "benefit": "无折扣"
+      },
+      {
+        "name": "银卡会员",
+        "threshold": 1000,
+        "discount": 0.95,
+        "benefit": "95 折"
+      },
+      {
+        "name": "金卡会员",
+        "threshold": 3000,
+        "discount": 0.9,
+        "benefit": "9 折 + 免费清洗保养"
+      },
+      {
+        "name": "钻石会员",
+        "threshold": 10000,
+        "discount": 0.85,
+        "benefit": "85 折 + 免费验光 + 优先加工"
+      }
+    ],
+    "pointsPerYuan": 1,
+    "pointsPerRecharge": 1
+  },
+  "customers": [],
+  "prescriptions": [],
+  "staff": [
+    {
+      "id": "s_mwxmwnhird64x",
+      "name": "李医生",
+      "role": "医生",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhijmgv4",
+      "name": "王医生",
+      "role": "医生",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhijz0ov",
+      "name": "陈医生",
+      "role": "医生",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhinvug3",
+      "name": "刘医生",
+      "role": "医生",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhib4rov",
+      "name": "陈销售",
+      "role": "销售",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhibkvl0",
+      "name": "刘销售",
+      "role": "销售",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhijbep0",
+      "name": "王销售",
+      "role": "销售",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhi4fkd2",
+      "name": "赵销售",
+      "role": "销售",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhikqy2r",
+      "name": "周师傅",
+      "role": "制作",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhirtphj",
+      "name": "吴师傅",
+      "role": "制作",
+      "phone": "",
+      "active": true
+    },
+    {
+      "id": "s_mwxmwnhiwbye6",
+      "name": "郑师傅",
+      "role": "制作",
+      "phone": "",
+      "active": true
+    }
+  ],
+  "members": [],
+  "memberCards": [],
+  "memberTxns": [],
+  "coupons": [
+    {
+      "id": "cp_mwxmwnhjiqhxj",
+      "name": "新客立减 50 元",
+      "type": "满减",
+      "faceValue": 50,
+      "threshold": 300,
+      "scopeCategory": "",
+      "validDays": 90,
+      "totalQty": 0,
+      "startDate": "",
+      "endDate": "",
+      "status": "启用",
+      "remark": "",
+      "createdAt": "2026-11-26T14:15:03.655Z"
+    },
+    {
+      "id": "cp_mwxmwnhjhuuhs",
+      "name": "框架镜 9 折券",
+      "type": "折扣",
+      "faceValue": 0.9,
+      "threshold": 0,
+      "scopeCategory": "框架眼镜",
+      "validDays": 60,
+      "totalQty": 0,
+      "startDate": "",
+      "endDate": "",
+      "status": "启用",
+      "remark": "",
+      "createdAt": "2026-11-26T14:15:03.655Z"
+    },
+    {
+      "id": "cp_mwxmwnhjh184v",
+      "name": "学生配镜满 800 减 120",
+      "type": "满减",
+      "faceValue": 120,
+      "threshold": 800,
+      "scopeCategory": "",
+      "validDays": 90,
+      "totalQty": 0,
+      "startDate": "",
+      "endDate": "",
+      "status": "启用",
+      "remark": "",
+      "createdAt": "2026-11-26T14:15:03.655Z"
+    }
+  ],
+  "couponGrants": [],
+  "activities": [
+    {
+      "id": "a_mwxmwnhjwkitj",
+      "name": "开学季充 1000 送 200",
+      "type": "充值赠送",
+      "threshold": 1000,
+      "giftAmount": 200,
+      "memberLevel": "",
+      "scopeCategory": "",
+      "startDate": "",
+      "endDate": "",
+      "status": "进行中",
+      "remark": "",
+      "createdAt": "2026-11-26T14:15:03.655Z"
+    },
+    {
+      "id": "a_mwxmwnhjmfbmu",
+      "name": "框架配镜满 1500 减 200",
+      "type": "配镜满减",
+      "threshold": 1500,
+      "reward": 200,
+      "memberLevel": "",
+      "scopeCategory": "框架眼镜",
+      "startDate": "",
+      "endDate": "",
+      "status": "进行中",
+      "remark": "",
+      "createdAt": "2026-11-26T14:15:03.655Z"
+    },
+    {
+      "id": "a_mwxmwnhjnc4wn",
+      "name": "会员日双倍积分",
+      "type": "双倍积分",
+      "threshold": 0,
+      "multiplier": 2,
+      "memberLevel": "",
+      "scopeCategory": "",
+      "startDate": "",
+      "endDate": "",
+      "status": "进行中",
+      "remark": "",
+      "createdAt": "2026-11-26T14:15:03.655Z"
+    }
+  ],
+  "createdAt": "2026-11-26T14:15:03.656Z",
+  "followUps": []
+}
