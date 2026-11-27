@@ -309,6 +309,7 @@ function sha256(s) { return crypto.createHash('sha256').update(String(s)).digest
 if (!Array.isArray(db.followUps)) db.followUps = [];
 if (!Array.isArray(db.refractiveRecords)) db.refractiveRecords = [];
 if (!Array.isArray(db.families)) db.families = [];
+if (!Array.isArray(db.referralRewards)) db.referralRewards = [];
 if (!db.settings.auth) { db.settings.auth = { passwordHash: sha256('admin123'), mustChange: true }; saveDB(); }
 
 const sessions = new Map();
@@ -331,7 +332,7 @@ function lanUrls() {
 }
 
 /* 健康检查：不返回任何业务数据，供 Docker / 负载均衡探活 */
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.4.0', time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.5.0', time: new Date().toISOString() }));
 
 app.post('/api/login', (req, res) => {
   const { password } = req.body || {};
@@ -718,6 +719,96 @@ app.delete('/api/families/:id', (req, res) => {
   db.families.splice(i, 1); saveDB(); res.json({ ok: true });
 });
 
+/* ---------------- P2-M7: 家庭内转介闭环（非现金权益，严格合规） ---------------- */
+// 转介时机资格：首单≥90天 且 活跃/忠诚（院方纪律：复查良好后3月起，最稳半年-一年）
+function referralEligible(ps, today, th) {
+  if (!ps.length) return false;
+  let first = ps[0].date;
+  for (const p of ps) if ((p.date || '') < first) first = p.date || '';
+  const tenure = diffDays(first, today);
+  const stage = computeStage(ps, today, th);
+  return tenure >= 90 && (stage === '活跃' || stage === '忠诚');
+}
+app.get('/api/referrals', (req, res) => {
+  const byCust = groupPrescriptionsByCustomer();
+  const today = todayISO(); const th = lifecycleThresholds();
+  const custById = new Map(db.customers.map((c) => [c.id, c]));
+  const relations = db.customers.filter((c) => c.referredBy).map((c) => ({ customerId: c.id, name: c.name, referredBy: c.referredBy, referrerName: (custById.get(c.referredBy) || {}).name || '—', source: c.source, createdAt: c.createdAt }));
+  const refCount = {};
+  db.customers.forEach((c) => { if (c.referredBy) refCount[c.referredBy] = (refCount[c.referredBy] || 0) + 1; });
+  const referrers = Object.entries(refCount).map(([id, n]) => ({ id, name: (custById.get(id) || {}).name || '—', count: n })).sort((a, b) => b.count - a.count);
+  const eligible = [];
+  for (const c of db.customers) {
+    const ps = byCust.get(c.id) || [];
+    if (referralEligible(ps, today, th)) eligible.push({ id: c.id, name: c.name, phone: c.phone, stage: computeStage(ps, today, th), orderCount: ps.length });
+  }
+  const referredTotal = relations.length;
+  const rewards = db.referralRewards.slice().sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')).slice(0, 100).map((w) => ({ ...w, referrerName: (custById.get(w.referrerId) || {}).name || '—' }));
+  res.json({ relations, referrers: referrers.slice(0, 50), eligible: eligible.slice(0, 200), eligibleTotal: eligible.length, referredTotal, referralRate: db.customers.length ? referredTotal / db.customers.length : 0, rewards });
+});
+app.post('/api/referrals/bind', (req, res) => {
+  const b = req.body || {};
+  const c = customerById(b.customerId);
+  if (!c) return res.status(404).json({ error: '客户不存在' });
+  if (b.referredBy && !customerById(b.referredBy)) return res.status(404).json({ error: '推荐人不存在' });
+  if (b.referredBy === b.customerId) return res.status(400).json({ error: '不能推荐自己' });
+  c.referredBy = b.referredBy || '';
+  saveDB(); res.json({ ok: true });
+});
+// 非现金服务权益（免费复查/优先预约/健康管理服务），不按消费返现/提成（院方合规底线③）
+const REFERRAL_BENEFITS = ['免费复查', '优先预约权', '健康管理服务', '家庭眼健康日志'];
+app.post('/api/referrals/reward', (req, res) => {
+  const b = req.body || {};
+  if (!b.referrerId || !customerById(b.referrerId)) return res.status(400).json({ error: '推荐人无效' });
+  const benefit = REFERRAL_BENEFITS.includes(b.benefit) ? b.benefit : REFERRAL_BENEFITS[0];
+  const r = { id: uid('rw_'), referrerId: b.referrerId, referredCustomerId: b.referredCustomerId || '', benefit, note: b.note || '', createdAt: new Date().toISOString() };
+  db.referralRewards.push(r); saveDB(); res.json(r);
+});
+app.delete('/api/referrals/reward/:id', (req, res) => {
+  const i = db.referralRewards.findIndex((x) => x.id === req.params.id);
+  if (i < 0) return res.status(404).json({ error: '记录不存在' });
+  db.referralRewards.splice(i, 1); saveDB(); res.json({ ok: true });
+});
+
+/* ---------------- P2-M8: LTV / 渠道看板 ---------------- */
+let _ltvCache = null, _ltvKey = '';
+app.get('/api/ltv-stats', (req, res) => {
+  const ck = _cacheEpoch + '|' + todayISO();
+  if (_ltvCache && _ltvKey === ck) return res.json(_ltvCache);
+  const byCust = groupPrescriptionsByCustomer();
+  const ltvOf = (cid) => (byCust.get(cid) || []).reduce((s, p) => s + Number(p.amount || 0), 0);
+  const srcMap = {};
+  let activated = 0, referred = 0, totalLtv = 0;
+  for (const c of db.customers) {
+    const ps = byCust.get(c.id) || [];
+    const ltv = ltvOf(c.id);
+    totalLtv += ltv;
+    if (ps.length) activated++;
+    if (c.referredBy) referred++;
+    const src = c.source || '未填写';
+    if (!srcMap[src]) srcMap[src] = { source: src, count: 0, activated: 0, totalSpend: 0, referred: 0 };
+    srcMap[src].count++;
+    if (ps.length) srcMap[src].activated++;
+    srcMap[src].totalSpend += ltv;
+    if (c.referredBy) srcMap[src].referred++;
+  }
+  const sources = Object.values(srcMap).sort((a, b) => b.count - a.count);
+  const famLtv = db.families.map((f) => {
+    const members = db.customers.filter((c) => c.familyId === f.id);
+    return { id: f.id, name: f.name, memberCount: members.length, ltv: members.reduce((s, c) => s + ltvOf(c.id), 0) };
+  }).sort((a, b) => b.ltv - a.ltv);
+  const total = db.customers.length;
+  const result = {
+    totalCustomers: total, activated, referred,
+    referrers: new Set(db.customers.filter((c) => c.referredBy).map((c) => c.referredBy)).size,
+    avgLtv: total ? Math.round(totalLtv / total) : 0, totalLtv: Math.round(totalLtv),
+    funnel: { '建档': total, '激活': activated, '转介': referred },
+    sources, familyLtv: famLtv.slice(0, 50),
+  };
+  _ltvCache = result; _ltvKey = ck;
+  res.json(result);
+});
+
 /* ---------------- 会员管理 ---------------- */
 if (!Array.isArray(db.members)) db.members = [];
 if (!Array.isArray(db.memberCards)) db.memberCards = [];
@@ -1065,7 +1156,7 @@ app.get('/api/customers/:id', (req, res) => {
   if (!c) return res.status(404).json({ error: '客户不存在' });
   const ps = db.prescriptions.filter((p) => p.customerId === c.id).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
   const s = rfmScores(ps, todayISO());
-  res.json({ ...c, lifecycleStage: computeStage(ps, todayISO(), lifecycleThresholds()), rfm: { R: s.R, F: s.F, M: s.M, segment: rfmSegment(s) }, prescriptions: ps });
+  res.json({ ...c, referredByName: c.referredBy ? ((customerById(c.referredBy) || {}).name || '') : '', lifecycleStage: computeStage(ps, todayISO(), lifecycleThresholds()), rfm: { R: s.R, F: s.F, M: s.M, segment: rfmSegment(s) }, prescriptions: ps });
 });
 
 app.post('/api/customers', (req, res) => {
@@ -1074,6 +1165,7 @@ app.post('/api/customers', (req, res) => {
   const c = {
     id: uid('c_'), name: b.name, gender: b.gender || '', age: b.age || '', phone: b.phone || '',
     school: b.school || '', source: b.source || '', sourceDetail: b.sourceDetail || '', remark: b.remark || '',
+    referredBy: b.referredBy || '',
     createdAt: new Date().toISOString(),
   };
   db.customers.push(c); saveDB(); res.json(c);
@@ -1086,6 +1178,7 @@ app.put('/api/customers/:id', (req, res) => {
   Object.assign(c, {
     name: b.name ?? c.name, gender: b.gender ?? c.gender, age: b.age ?? c.age, phone: b.phone ?? c.phone,
     school: b.school ?? c.school, source: b.source ?? c.source, sourceDetail: b.sourceDetail ?? c.sourceDetail, remark: b.remark ?? c.remark,
+    referredBy: b.referredBy ?? c.referredBy,
   });
   saveDB(); res.json(c);
 });

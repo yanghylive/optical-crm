@@ -911,7 +911,7 @@ async function showCustomer(id) {
         <div>
           <div class="detail-name">${esc(c.name)} <span class="tag ${STAGE_COLOR[c.lifecycleStage] || ''}" style="margin-left:6px">${esc(c.lifecycleStage || '')}</span> ${c.rfm ? `<span class="tag" style="margin-left:4px">RFM ${c.rfm.R}${c.rfm.F}${c.rfm.M} · ${esc(c.rfm.segment)}</span>` : ''}</div>
           <div class="detail-meta">${esc(c.gender || '—')} · ${esc(c.age || '—')} 岁 · ${esc(c.phone || '无电话')} · ${esc(c.school || '')}</div>
-          <div class="detail-meta">来源：${esc(c.source || '—')} ${c.sourceDetail ? ' / ' + esc(c.sourceDetail) : ''}</div>
+          <div class="detail-meta">来源：${esc(c.source || '—')} ${c.sourceDetail ? ' / ' + esc(c.sourceDetail) : ''} ${c.referredByName ? ' · 推荐人：' + esc(c.referredByName) : ''}</div>
         </div>
       </div>
       <div class="detail-stats">
@@ -961,9 +961,7 @@ async function showCustomer(id) {
 
 /* ---------------- P1-M6/M4: 客户运营（RFM 唤醒 + 家庭账户） ---------------- */
 const RFM_COLOR = { '重要价值': 'green', '重要发展': 'green', '重要保持': 'orange', '重要挽留': 'orange', '一般价值': '', '一般': 'gray', '流失预警': 'orange', '潜在': 'gray' };
-async function renderOps() {
-  const [rfm, families] = await Promise.all([api('/api/rfm-stats'), api('/api/families')]);
-  $('#topActions').innerHTML = `<button class="btn primary" id="addFamily">＋ 新建家庭账户</button>`;
+function opsWinback(rfm) {
   const segTags = Object.entries(rfm.segDist).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<span class="tag ${RFM_COLOR[k] || ''}">${esc(k)} ${v}</span>`).join('');
   const winRows = rfm.winback.map((w) => `<tr>
     <td><span class="link" data-customer="${esc(w.customerId)}">${esc(w.name)}</span></td>
@@ -974,38 +972,165 @@ async function renderOps() {
     <td class="muted">${esc(w.lastDate || '—')}</td>
     <td class="num">${w.since != null ? w.since + ' 天' : '—'}</td>
     <td><button class="btn sm" data-customer="${esc(w.customerId)}">查看</button></td></tr>`).join('');
+  return `<div class="panel">
+    <div class="panel-head"><div><div class="panel-title">RFM 分层 · 沉睡唤醒</div><div class="panel-sub">高价值流失客户优先唤醒（重要挽留/重要保持）</div></div><span class="tag orange">待唤醒 ${rfm.winbackTotal}</span></div>
+    <div class="panel-body">
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">${segTags}</div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>姓名</th><th>电话</th><th>分层</th><th class="num">累计消费</th><th class="num">次数</th><th>最近配镜</th><th class="num">距今</th><th>操作</th></tr></thead>
+        <tbody>${winRows || '<tr><td colspan="8"><div class="empty">暂无高价值流失客户</div></td></tr>'}</tbody>
+      </table></div>
+      <div class="hint">召回券请在「营销活动」给对应会员发放；非会员可先建档升级。RFM：R 最近消费 / F 频率 / M 金额。</div>
+    </div>
+  </div>`;
+}
+function opsFamily(families) {
   const famRows = families.map((f) => `<tr>
     <td><span class="link" data-family="${esc(f.id)}">${esc(f.name)}</span></td>
     <td class="num">${f.memberCount}</td>
     <td class="muted">${esc((f.createdAt || '').slice(0, 10))}</td>
     <td class="muted">${esc(f.remark || '—')}</td>
     <td><div class="actions"><button class="btn sm" data-family="${esc(f.id)}">查看</button><button class="btn sm danger" data-delfam="${esc(f.id)}">删除</button></div></td></tr>`).join('');
-  $('#view').innerHTML = `
-    <div class="panel" style="margin-bottom:16px">
-      <div class="panel-head"><div><div class="panel-title">RFM 分层 · 沉睡唤醒</div><div class="panel-sub">高价值流失客户优先唤醒（重要挽留/重要保持）</div></div><span class="tag orange">待唤醒 ${rfm.winbackTotal}</span></div>
-      <div class="panel-body">
-        <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px">${segTags}</div>
-        <div class="table-wrap"><table>
-          <thead><tr><th>姓名</th><th>电话</th><th>分层</th><th class="num">累计消费</th><th class="num">次数</th><th>最近配镜</th><th class="num">距今</th><th>操作</th></tr></thead>
-          <tbody>${winRows || '<tr><td colspan="8"><div class="empty">暂无高价值流失客户</div></td></tr>'}</tbody>
-        </table></div>
-        <div class="hint">召回券请在「营销活动」给对应会员发放；非会员可先建档升级。RFM：R 最近消费 / F 频率 / M 金额。</div>
+  return `<div class="panel">
+    <div class="panel-head"><div><div class="panel-title">家庭账户</div><div class="panel-sub">以家庭为单位绑定成员 · 概览仅提示"该查没查"，不展示具体病情（分层授权）</div></div><span class="tag gray">${families.length} 个家庭</span></div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>家庭</th><th class="num">成员数</th><th>创建</th><th>备注</th><th>操作</th></tr></thead>
+      <tbody>${famRows || '<tr><td colspan="5"><div class="empty">还没有家庭账户，点右上角新建（如"张晓雨家庭"）</div></td></tr>'}</tbody>
+    </table></div>
+  </div>`;
+}
+function opsReferral(ref) {
+  const relRows = ref.relations.map((r) => `<tr>
+    <td><span class="link" data-customer="${esc(r.customerId)}">${esc(r.name)}</span></td>
+    <td><span class="link" data-customer="${esc(r.referredBy)}">${esc(r.referrerName)}</span></td>
+    <td><span class="tag">${esc(r.source || '—')}</span></td>
+    <td class="muted">${esc((r.createdAt || '').slice(0, 10))}</td></tr>`).join('');
+  const refRows = ref.referrers.map((r) => `<tr><td><span class="link" data-customer="${esc(r.id)}">${esc(r.name)}</span></td><td class="num">${r.count}</td>
+    <td><button class="btn sm" data-reward="${esc(r.id)}">发权益</button></td></tr>`).join('');
+  const rwRows = ref.rewards.map((w) => `<tr><td class="muted">${esc((w.createdAt || '').slice(0, 10))}</td><td>${esc(w.referrerName || '—')}</td><td><span class="tag green">${esc(w.benefit)}</span></td><td class="muted">${esc(w.note || '—')}</td>
+    <td><button class="btn sm danger" data-delrw="${esc(w.id)}">删</button></td></tr>`).join('');
+  return `<div class="panel" style="margin-bottom:16px">
+    <div class="panel-head"><div><div class="panel-title">家庭内转介闭环</div><div class="panel-sub">系统自动绑定推荐关系 · 权益非现金化（免费复查/优先预约/健康服务，不返现提成）</div></div>
+      <div class="actions"><button class="btn sm" id="refBind">＋ 新增转介</button><button class="btn sm primary" id="refReward">发放服务权益</button></div></div>
+    <div class="panel-body">
+      <div class="grid stats" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:14px">
+        ${statCard('转介率', (ref.referralRate * 100).toFixed(1) + '%', '被推荐客户占比', 'accent')}
+        ${statCard('被推荐客户', ref.referredTotal, '人', '')}
+        ${statCard('推荐人', ref.referrers.length, '人', 'teal')}
+        ${statCard('可邀请转介', ref.eligibleTotal, '活跃/忠诚且首单≥90天', '')}
       </div>
+      <div class="hint" style="margin-bottom:12px">院方纪律：0-1月内不主动求转介；正式触发最早复查良好后3月，最稳半年-一年；每次触达绑定诊疗事件；话术"您家里那个也戴眼镜的人，可以做一次同样的评估"。</div>
+      <div class="grid two-col">
+        <div><div class="section-title">转介关系（被推荐人 → 推荐人）</div>
+          <div class="table-wrap"><table><thead><tr><th>被推荐人</th><th>推荐人</th><th>来源</th><th>建档</th></tr></thead>
+          <tbody>${relRows || '<tr><td colspan="4"><div class="empty">暂无转介关系</div></td></tr>'}</tbody></table></div></div>
+        <div><div class="section-title">推荐人排行</div>
+          <div class="table-wrap"><table><thead><tr><th>推荐人</th><th class="num">推荐数</th><th></th></tr></thead>
+          <tbody>${refRows || '<tr><td colspan="3"><div class="empty">暂无</div></td></tr>'}</tbody></table></div></div>
+      </div>
+      <div class="section-title" style="margin-top:14px">服务权益记录（非现金）</div>
+      <div class="table-wrap"><table><thead><tr><th>日期</th><th>推荐人</th><th>权益</th><th>备注</th><th></th></tr></thead>
+      <tbody>${rwRows || '<tr><td colspan="5"><div class="empty">暂无权益记录</div></td></tr>'}</tbody></table></div>
     </div>
-    <div class="panel">
-      <div class="panel-head"><div><div class="panel-title">家庭账户</div><div class="panel-sub">以家庭为单位绑定成员 · 概览仅提示"该查没查"，不展示具体病情（分层授权）</div></div><span class="tag gray">${families.length} 个家庭</span></div>
-      <div class="table-wrap"><table>
-        <thead><tr><th>家庭</th><th class="num">成员数</th><th>创建</th><th>备注</th><th>操作</th></tr></thead>
-        <tbody>${famRows || '<tr><td colspan="5"><div class="empty">还没有家庭账户，点右上角新建（如"张晓雨家庭"）</div></td></tr>'}</tbody>
-      </table></div>
-    </div>`;
-  $('#addFamily').addEventListener('click', () => openFamilyForm());
+  </div>`;
+}
+function opsLtv(ltv) {
+  const f = ltv.funnel;
+  const maxF = Math.max(1, f['建档']);
+  const funnel = ['建档', '激活', '转介'].map((k) => `<div class="source-row"><div class="source-name">${k}</div><div class="source-track"><div class="source-fill" style="width:${Math.max(3, (f[k] / maxF) * 100)}%"></div></div><div class="source-val">${f[k]}</div></div>`).join('');
+  const srcRows = ltv.sources.map((s) => `<tr><td><span class="tag">${esc(s.source)}</span></td><td class="num">${s.count}</td><td class="num">${s.activated}</td><td class="num money">${money(s.totalSpend)}</td><td class="num">${s.referred}</td><td class="num">${s.count ? Math.round(s.totalSpend / s.count) : 0}</td></tr>`).join('');
+  const famRows = ltv.familyLtv.map((fam) => `<tr><td><span class="link" data-family="${esc(fam.id)}">${esc(fam.name)}</span></td><td class="num">${fam.memberCount}</td><td class="num money">${money(fam.ltv)}</td></tr>`).join('');
+  return `<div class="panel" style="margin-bottom:16px">
+    <div class="panel-head"><div><div class="panel-title">LTV · 渠道经营看板</div><div class="panel-sub">客户生命周期价值 + 来源归因 + 转化漏斗</div></div></div>
+    <div class="panel-body">
+      <div class="grid stats" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:14px">
+        ${statCard('客户总数', ltv.totalCustomers, '建档', 'accent')}
+        ${statCard('平均 LTV', money(ltv.avgLtv), '元 / 客户', '')}
+        ${statCard('累计 LTV', money(ltv.totalLtv), '元', 'teal')}
+        ${statCard('激活率', ltv.totalCustomers ? (ltv.activated / ltv.totalCustomers * 100).toFixed(0) + '%' : '0%', '有配镜客户占比', '')}
+      </div>
+      <div class="grid two-col">
+        <div><div class="section-title">转化漏斗</div>${funnel}</div>
+        <div><div class="section-title">家庭 LTV 排行</div>
+          <div class="table-wrap"><table><thead><tr><th>家庭</th><th class="num">成员</th><th class="num">LTV</th></tr></thead>
+          <tbody>${famRows || '<tr><td colspan="3"><div class="empty">暂无家庭</div></td></tr>'}</tbody></table></div></div>
+      </div>
+      <div class="section-title" style="margin-top:14px">来源渠道归因</div>
+      <div class="table-wrap"><table><thead><tr><th>来源</th><th class="num">建档数</th><th class="num">激活</th><th class="num">累计消费</th><th class="num">转介数</th><th class="num">人均消费</th></tr></thead>
+      <tbody>${srcRows || '<tr><td colspan="6"><div class="empty">暂无</div></td></tr>'}</tbody></table></div>
+      <div class="hint">建档成本需录入营销投入后核算（当前未追踪投入）；来源标记可审计（人民医院眼科/社区筛查/学校筛查/老客推荐/自然到院）。</div>
+    </div>
+  </div>`;
+}
+async function renderOps() {
+  const [rfm, families, ref, ltv] = await Promise.all([api('/api/rfm-stats'), api('/api/families'), api('/api/referrals'), api('/api/ltv-stats')]);
+  state.customers = state.customers || [];
+  const tab = state._opsTab || 'winback';
+  const tabs = [['winback', '沉睡唤醒'], ['family', '家庭账户'], ['referral', '转介闭环'], ['ltv', '经营看板']];
+  $('#topActions').innerHTML = tab === 'family' ? `<button class="btn primary" id="addFamily">＋ 新建家庭账户</button>` : '';
+  const tabBar = `<div class="panel" style="margin-bottom:16px"><div class="toolbar">${tabs.map(([k, l]) => `<button class="btn ${tab === k ? 'primary' : ''}" data-opstab="${k}">${l}</button>`).join('')}<div class="spacer"></div></div></div>`;
+  const content = tab === 'winback' ? opsWinback(rfm) : tab === 'family' ? opsFamily(families) : tab === 'referral' ? opsReferral(ref) : opsLtv(ltv);
+  $('#view').innerHTML = tabBar + content;
+  $$('[data-opstab]').forEach((el) => el.addEventListener('click', () => { state._opsTab = el.dataset.opstab; renderOps(); }));
   $$('[data-customer]').forEach((el) => el.addEventListener('click', () => showCustomer(el.dataset.customer)));
   $$('[data-family]').forEach((el) => el.addEventListener('click', () => showFamily(el.dataset.family)));
-  $$('[data-delfam]').forEach((el) => el.addEventListener('click', async () => {
-    if (!confirm('删除该家庭账户？成员客户关系会解除（不删客户）。')) return;
-    try { await api('/api/families/' + el.dataset.delfam, { method: 'DELETE' }); toast('已删除'); renderOps(); } catch (e) { toast(e.message, 'error'); }
-  }));
+  if (tab === 'family') {
+    $('#addFamily').addEventListener('click', () => openFamilyForm());
+    $$('[data-delfam]').forEach((el) => el.addEventListener('click', async () => {
+      if (!confirm('删除该家庭账户？成员客户关系会解除（不删客户）。')) return;
+      try { await api('/api/families/' + el.dataset.delfam, { method: 'DELETE' }); toast('已删除'); renderOps(); } catch (e) { toast(e.message, 'error'); }
+    }));
+  }
+  if (tab === 'referral') {
+    $('#refBind').addEventListener('click', () => openReferralBind());
+    $('#refReward').addEventListener('click', () => openReferralReward());
+    $$('[data-reward]').forEach((el) => el.addEventListener('click', () => openReferralReward(el.dataset.reward)));
+    $$('[data-delrw]').forEach((el) => el.addEventListener('click', async () => {
+      if (!confirm('删除该权益记录？')) return;
+      try { await api('/api/referrals/reward/' + el.dataset.delrw, { method: 'DELETE' }); toast('已删除'); renderOps(); } catch (e) { toast(e.message, 'error'); }
+    }));
+  }
+}
+function openReferralBind() {
+  const { root, close } = openModal({
+    title: '新增转介绑定', subtitle: '被推荐人 → 推荐人（系统自动绑定，来源可审计）',
+    body: `<div class="form-grid" style="grid-template-columns:1fr">
+      <div class="field"><label>被推荐人（新客户）</label><input class="input" id="rbSearch" placeholder="搜索姓名/电话"><select class="select" id="rbCustomer" size="5" style="margin-top:6px"></select></div>
+      <div class="field"><label>推荐人</label><input class="input" id="rbRefSearch" placeholder="搜索姓名/电话"><select class="select" id="rbReferrer" size="5" style="margin-top:6px"></select></div>
+    </div>`,
+    footer: `<button class="btn" data-cancel>取消</button><button class="btn primary" id="rbSave">绑定</button>`, size: 'narrow',
+  });
+  const load = async (sel, q) => { const r = await api('/api/customers?pageSize=20' + (q ? '&search=' + encodeURIComponent(q) : '')); $(sel, root).innerHTML = (r.items || r).map((c) => `<option value="${esc(c.id)}">${esc(c.name)} · ${esc(c.phone || '无电话')}</option>`).join(''); };
+  load('#rbCustomer', ''); load('#rbReferrer', '');
+  let t1, t2;
+  $('#rbSearch', root).addEventListener('input', (e) => { clearTimeout(t1); t1 = setTimeout(() => load('#rbCustomer', e.target.value.trim()), 250); });
+  $('#rbRefSearch', root).addEventListener('input', (e) => { clearTimeout(t2); t2 = setTimeout(() => load('#rbReferrer', e.target.value.trim()), 250); });
+  $('[data-cancel]', root).addEventListener('click', close);
+  $('#rbSave', root).addEventListener('click', async () => {
+    const customerId = $('#rbCustomer', root).value, referredBy = $('#rbReferrer', root).value;
+    if (!customerId || !referredBy) return toast('请选择被推荐人和推荐人', 'error');
+    try { await api('/api/referrals/bind', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ customerId, referredBy }) }); close(); toast('转介已绑定'); renderOps(); } catch (e) { toast(e.message, 'error'); }
+  });
+}
+function openReferralReward(prefillReferrer) {
+  const { root, close } = openModal({
+    title: '发放服务权益', subtitle: '非现金权益（不返现/不按消费提成）',
+    body: `<div class="form-grid" style="grid-template-columns:1fr">
+      <div class="field"><label>推荐人</label><input class="input" id="rwSearch" placeholder="搜索姓名/电话"><select class="select" id="rwReferrer" size="5" style="margin-top:6px"></select></div>
+      <div class="field"><label>权益类型</label><select class="select" id="rwBenefit"><option>免费复查</option><option>优先预约权</option><option>健康管理服务</option><option>家庭眼健康日志</option></select></div>
+      <div class="field"><label>备注</label><input class="input" id="rwNote" placeholder="如：推荐张晓雨家庭建档"></div>
+    </div>`,
+    footer: `<button class="btn" data-cancel>取消</button><button class="btn primary" id="rwSave">发放</button>`, size: 'narrow',
+  });
+  const load = async (q) => { const r = await api('/api/customers?pageSize=20' + (q ? '&search=' + encodeURIComponent(q) : '')); $('#rwReferrer', root).innerHTML = (r.items || r).map((c) => `<option value="${esc(c.id)}" ${c.id === prefillReferrer ? 'selected' : ''}>${esc(c.name)} · ${esc(c.phone || '无电话')}</option>`).join(''); };
+  load('');
+  let t; $('#rwSearch', root).addEventListener('input', (e) => { clearTimeout(t); t = setTimeout(() => load(e.target.value.trim()), 250); });
+  $('[data-cancel]', root).addEventListener('click', close);
+  $('#rwSave', root).addEventListener('click', async () => {
+    const referrerId = $('#rwReferrer', root).value;
+    if (!referrerId) return toast('请选择推荐人', 'error');
+    try { await api('/api/referrals/reward', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ referrerId, benefit: $('#rwBenefit', root).value, note: $('#rwNote', root).value.trim() }) }); close(); toast('权益已发放'); renderOps(); } catch (e) { toast(e.message, 'error'); }
+  });
 }
 function openFamilyForm() {
   const { root, close } = openModal({
