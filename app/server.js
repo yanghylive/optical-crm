@@ -332,7 +332,7 @@ function lanUrls() {
 }
 
 /* 健康检查：不返回任何业务数据，供 Docker / 负载均衡探活 */
-app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.5.0', time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({ ok: true, service: 'optical-crm', version: '1.6.0', time: new Date().toISOString() }));
 
 app.post('/api/login', (req, res) => {
   const { password } = req.body || {};
@@ -1203,17 +1203,40 @@ app.post('/api/customers/batch-delete', (req, res) => {
   saveDB(); res.json({ ok: true, deleted, skipped: ids.length - deleted });
 });
 
+/* 全字段筛选（列表与导出共用）：文本包含匹配 + 数值区间 + 日期区间 + 全局搜索 */
+function filterPrescriptions(list, q) {
+  const txt = (v) => String(v == null ? '' : v).trim().toLowerCase();
+  const g = (k) => String(q[k] == null ? '' : q[k]).trim();
+  const num = (v) => { const n = parseFloat(v); return isNaN(n) ? null : n; };
+  const inRange = (v, min, max) => {
+    const n = num(v); if (n == null) return false;
+    if (min !== '' && n < parseFloat(min)) return false;
+    if (max !== '' && n > parseFloat(max)) return false;
+    return true;
+  };
+  let out = list;
+  if (g('from')) out = out.filter((p) => p.date >= g('from'));
+  if (g('to')) out = out.filter((p) => p.date <= g('to'));
+  const textFields = { name: 'customerName', gender: 'gender', phone: 'phone', school: 'school', source: 'source', sourceDetail: 'sourceDetail', doctor: 'doctor', sales: 'sales', company: 'company', category: 'category', frame: 'frame', model: 'model', lens: 'lens', sphR: 'sphR', sphL: 'sphL', remark: 'remark' };
+  for (const [param, field] of Object.entries(textFields)) {
+    const v = g(param); if (v) out = out.filter((p) => txt(p[field]).includes(txt(v)));
+  }
+  const numFields = { amount: 'amount', age: 'age', pd: 'pd', rpd: 'rpd', lpd: 'lpd' };
+  for (const [param, field] of Object.entries(numFields)) {
+    const min = g(param + 'Min'), max = g(param + 'Max');
+    if (min !== '' || max !== '') out = out.filter((p) => inRange(p[field], min, max));
+  }
+  const phMin = g('phMin'), phMax = g('phMax');
+  if (phMin !== '' || phMax !== '') out = out.filter((p) => inRange(p.phR, phMin, phMax) || inRange(p.phL, phMin, phMax));
+  const s = txt(q.search);
+  if (s) out = out.filter((p) => [p.customerName, p.phone, p.gender, p.school, p.source, p.sourceDetail, p.frame, p.model, p.lens, p.sales, p.doctor, p.company, p.category, p.sphR, p.sphL, p.remark].join(' ').toLowerCase().includes(s));
+  return out;
+}
+
 app.get('/api/prescriptions', (req, res) => {
-  const { from, to, source, category, sales, search } = req.query;
-  const q = String(search || '').trim().toLowerCase();
   const cmap = buildCustMap();
   let list = db.prescriptions.map((p) => enrichPrescription(p, cmap));
-  if (from) list = list.filter((p) => p.date >= from);
-  if (to) list = list.filter((p) => p.date <= to);
-  if (source) list = list.filter((p) => p.source === source);
-  if (category) list = list.filter((p) => p.category === category);
-  if (sales) list = list.filter((p) => p.sales === sales);
-  if (q) list = list.filter((p) => [p.customerName, p.phone, p.frame, p.model, p.lens, p.sales, p.doctor].join(' ').toLowerCase().includes(q));
+  list = filterPrescriptions(list, req.query);
   list.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.createdAt || '').localeCompare(a.createdAt || ''));
   paginate(list, req, res);
 });
@@ -1445,6 +1468,9 @@ async function buildWorkbook(rows, sheetName) {
     row.eachCell((cell) => { cell.border = { top: { style: 'thin' }, left: { style: 'thin' }, bottom: { style: 'thin' }, right: { style: 'thin' } }; });
   });
   ws.views = [{ state: 'frozen', ySplit: 1 }];
+  // Excel 自动筛选：表头全列启用，导出后可直接在 Excel 里按列筛选
+  const colLetter = (n) => { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; };
+  ws.autoFilter = { from: 'A1', to: colLetter(COLUMNS.length) + '1' };
   return wb;
 }
 
@@ -1558,7 +1584,9 @@ app.post('/api/admin/clear-demo', (req, res) => {
 
 app.get('/api/export', async (req, res) => {
   const cmap = buildCustMap();
-  const list = db.prescriptions.map((p) => enrichPrescription(p, cmap)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  let list = db.prescriptions.map((p) => enrichPrescription(p, cmap));
+  list = filterPrescriptions(list, req.query);
+  list.sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const data = list.map((p) => ({
     '备注': p.remark || '', '日期': p.date || '', '姓名': p.customerName, '性别': p.gender, '年龄': p.age,
     '电话': p.phone, '学校': p.school, '来源': p.source, '来源明细': p.sourceDetail, '金额': p.amount,

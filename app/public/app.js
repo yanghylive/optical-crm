@@ -285,7 +285,28 @@ function statCard(label, value, foot, cls) {
 }
 
 /* ---------------- 配镜记录 ---------------- */
-const filter = { from: '', to: '', source: '', category: '', sales: '', search: '' };
+const filter = {
+  from: '', to: '', source: '', category: '', sales: '', search: '',
+  name: '', gender: '', phone: '', school: '', sourceDetail: '', doctor: '', company: '', frame: '', model: '', lens: '', sphR: '', sphL: '', remark: '',
+  amountMin: '', amountMax: '', ageMin: '', ageMax: '', pdMin: '', pdMax: '', rpdMin: '', rpdMax: '', lpdMin: '', lpdMax: '', phMin: '', phMax: '',
+};
+/* 高级筛选字段（文本=包含匹配，range=数值区间） */
+const ADV_FILTERS = [
+  { key: 'name', label: '姓名', type: 'text' }, { key: 'gender', label: '性别', type: 'text' },
+  { key: 'phone', label: '电话', type: 'text' }, { key: 'school', label: '学校', type: 'text' },
+  { key: 'sourceDetail', label: '来源明细', type: 'text' }, { key: 'doctor', label: '医生', type: 'text' },
+  { key: 'company', label: '公司', type: 'text' }, { key: 'frame', label: '框/产品', type: 'text' },
+  { key: 'model', label: '型号', type: 'text' }, { key: 'lens', label: '片', type: 'text' },
+  { key: 'sphR', label: '度数R', type: 'text' }, { key: 'sphL', label: '度数L', type: 'text' },
+  { key: 'remark', label: '备注', type: 'text' },
+  { key: 'amount', label: '金额', type: 'range' }, { key: 'age', label: '年龄', type: 'range' },
+  { key: 'pd', label: '瞳距', type: 'range' }, { key: 'rpd', label: 'RPD', type: 'range' },
+  { key: 'lpd', label: 'LPD', type: 'range' }, { key: 'ph', label: '瞳高', type: 'range' },
+];
+function prescriptionExportUrl() {
+  const p = new URLSearchParams(Object.fromEntries(Object.entries(filter).filter(([, v]) => v)));
+  return '/api/export' + (p.toString() ? '?' + p.toString() : '');
+}
 const pPage = { page: 1, pageSize: 100, total: 0 };
 const cPage = { page: 1, pageSize: 100, total: 0 };
 /* 分页控件（服务端分页，避免一次渲染上万行） */
@@ -325,8 +346,14 @@ async function renderPrescriptions() {
   const categories = state.settings.categories || [];
 
   $('#topActions').innerHTML = `
-    <a class="btn" href="${authUrl('/api/export')}">导出 Excel</a>
+    <a class="btn" id="exportLink" href="${authUrl(prescriptionExportUrl())}">导出 Excel</a>
     <button class="btn primary" id="addPrescription">＋ 新增配镜记录</button>`;
+
+  const advPanel = state._advOpen ? `<div class="toolbar" style="border-top:1px dashed var(--border);padding-top:12px;margin-top:4px">
+    ${ADV_FILTERS.map((f) => f.type === 'text'
+      ? `<div class="field"><label>${f.label}</label><input class="input" id="adv_${f.key}" value="${esc(filter[f.key])}" placeholder="包含"></div>`
+      : `<div class="field"><label>${f.label}</label><div style="display:flex;gap:4px"><input class="input" id="adv_${f.key}Min" type="number" step="any" value="${esc(filter[f.key + 'Min'])}" placeholder="最小"><input class="input" id="adv_${f.key}Max" type="number" step="any" value="${esc(filter[f.key + 'Max'])}" placeholder="最大"></div></div>`).join('')}
+  </div>` : '';
 
   $('#view').innerHTML = `
     <div class="panel">
@@ -336,11 +363,13 @@ async function renderPrescriptions() {
         <div class="field"><label>来源</label><select class="select" id="fSource"><option value="">全部</option>${sources.map((s) => `<option ${filter.source === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
         <div class="field"><label>分类</label><select class="select" id="fCategory"><option value="">全部</option>${categories.map((s) => `<option ${filter.category === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
         <div class="field"><label>销售</label><select class="select" id="fSales"><option value="">全部</option>${salesOptions.map((s) => `<option ${filter.sales === s ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select></div>
-        <div class="field"><label>搜索</label><input class="input search" id="fSearch" placeholder="姓名 / 电话 / 型号 / 销售" value="${esc(filter.search)}"></div>
+        <div class="field"><label>搜索</label><input class="input search" id="fSearch" placeholder="全字段模糊搜索" value="${esc(filter.search)}"></div>
         <div class="spacer"></div>
+        <button class="btn ghost" id="advToggle">${state._advOpen ? '收起筛选 ▲' : '高级筛选 ▼'}</button>
         <button class="btn danger" id="batchDelP" disabled>批量删除</button>
         <button class="btn ghost" id="resetFilter">重置</button>
       </div>
+      ${advPanel}
       <div class="table-wrap">
         <table>
           <thead><tr>
@@ -363,6 +392,7 @@ async function renderPrescriptions() {
     state.prescriptions = rows;
     $('#pBody').innerHTML = prescriptionRows(rows);
     $('#pPager').innerHTML = pagerHtml('p', pPage);
+    const ex = $('#exportLink'); if (ex) ex.href = authUrl(prescriptionExportUrl());
     bindPager('p', pPage, refresh);
     bindRowActions();
     bindPChecks();
@@ -371,13 +401,22 @@ async function renderPrescriptions() {
     filter.from = $('#fFrom').value; filter.to = $('#fTo').value;
     filter.source = $('#fSource').value; filter.category = $('#fCategory').value;
     filter.sales = $('#fSales').value; filter.search = $('#fSearch').value.trim();
+    ADV_FILTERS.forEach((f) => {
+      if (f.type === 'text') { const el = $('#adv_' + f.key); if (el) filter[f.key] = el.value.trim(); }
+      else { const mn = $('#adv_' + f.key + 'Min'), mx = $('#adv_' + f.key + 'Max'); if (mn) filter[f.key + 'Min'] = mn.value; if (mx) filter[f.key + 'Max'] = mx.value; }
+    });
     pPage.page = 1;
     refresh();
   };
   ['fFrom', 'fTo', 'fSource', 'fCategory', 'fSales'].forEach((id) => $('#' + id).addEventListener('change', readFilters));
   let t; $('#fSearch').addEventListener('input', () => { clearTimeout(t); t = setTimeout(readFilters, 250); });
+  let ta; ADV_FILTERS.forEach((f) => {
+    const ids = f.type === 'text' ? ['adv_' + f.key] : ['adv_' + f.key + 'Min', 'adv_' + f.key + 'Max'];
+    ids.forEach((id) => { const el = $('#' + id); if (el) el.addEventListener('input', () => { clearTimeout(ta); ta = setTimeout(readFilters, 300); }); });
+  });
+  $('#advToggle').addEventListener('click', () => { state._advOpen = !state._advOpen; renderPrescriptions(); });
   $('#resetFilter').addEventListener('click', () => {
-    Object.assign(filter, { from: '', to: '', source: '', category: '', sales: '', search: '' });
+    Object.keys(filter).forEach((k) => { filter[k] = ''; });
     pPage.page = 1;
     renderPrescriptions();
   });
